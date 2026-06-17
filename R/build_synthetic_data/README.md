@@ -1,78 +1,90 @@
-# Synthetic OG cancer waiting-times data
+# OG minimal synthetic pipeline
 
-Code that builds a fully synthetic version of the OG (oesophago-gastric) cancer
-waiting-times datasets, driven by a disclosure-safe aggregate profile of the
-real ICON cohort. The synthetic data lets the downstream merge / provider
-analysis be developed and tested off-server, then run unchanged on the real data.
+A compact synthetic-data pipeline for the oesophago-gastric (OG) cancer
+waiting-times work. It builds a synthetic registry + treatment cohort and a
+synthetic Cancer Waiting Times (CWT) records table, then merges them on exactly
+the same logic the real pipeline uses, reproducing the NOGCA audit pathways and
+categorisations. The same minimal merge also runs on the real ICON cohort once
+it is condensed to the minimal column set, so the merge code is written once and
+shared between synthetic and real data.
 
-## Layout
+The design follows the lighter colon example rather than the full 128-column OG
+cohort: a minimal Table A carries identity, a handful of patient/tumour
+descriptors, the treatment anchor dates, the derived pathway, and survival -
+enough to drive the merge and the audit tables, nothing more.
 
-```
-Data/
-  ICON/                                  real ICON inputs (read-only source)
-    og_cohort_cwt_2015_2022.rds          post-merge cohort  (needed by script 02)
-    ncras_og_2015_2022.rds               }
-    OG_endoscopy_anchor_combined.rds     }
-    OG_emresd_anchor.rds                 } anchor objects, only needed by
-    og_surgery_anchor_2015_2022.rds      } script 01's optional cohort rebuild
-    og_sact_anchor_2015_2022.rds         }
-    rt_anchor_og.rds                     }
-  synthetic/                             everything the build produces
-    og_pipeline_spec.rds                 spec object (script 01)
-    og_profile_for_synthetic.rds         aggregate profile (script 02)
-    og_cohort_precwt_SYNTH.rds / .dta    synthetic Table A (script 03)
-    cwt_records_SYNTH.rds / .dta         synthetic Table B (script 03)
-    provider_level/
-      OG_pairwise_distance_matrix_SYNTH.dta   (script 05)
-      NHSHospitals_valid_sites_SYNTH.dta      (script 05)
-      NHSHospitals_services_SYNTH.xlsx        (script 06)
-R/
-  build_synthetic_data/
-    01_pre_cwt_specification.R
-    02_profile_for_synthetic_data.R
-    03_generate_synthetic_data.R
-    04_validate_synthetic_dataset.R
-    05_create_synthetic_distance_matrix.R
-    06_create_synthetic_provider_excel.R
-Stata/
-  01_data_format_checks.do
-```
+## Scripts and run order
 
-Paths are resolved with `here::here()`, so scripts run from anywhere inside the
-repository (the project root is found via the `.git` / `.Rproj` marker). No paths
-need editing between machines.
+The scripts are numbered in dependency order.
 
-## Run order
+1. `01_og_minimal_merge.R` - the shared engine. Defines the merge constants,
+   the modality/pathway lookups, `og_cwt_merge()` (the linkage + audit
+   categorisation), the minimal Table A column contract (`og_minimal_cols`), and
+   `condense_icon_to_minimal()` for reducing the real cohort. This script is
+   sourced by 03 and 04; it is not run on its own.
 
-| # | Script | Reads | Writes |
-|---|--------|-------|--------|
-| 1 | 01_pre_cwt_specification.R | ICON anchors (optional) | og_pipeline_spec.rds |
-| 2 | 02_profile_for_synthetic_data.R | spec + og_cohort_cwt_2015_2022.rds | og_profile_for_synthetic.rds |
-| 3 | 03_generate_synthetic_data.R | profile | og_cohort_precwt_SYNTH, cwt_records_SYNTH (.rds + .dta) |
-| 4 | 04_validate_synthetic_dataset.R | spec + synthetic cohort | (console report) |
-| 5 | 05_create_synthetic_distance_matrix.R | synthetic cohort | distance matrix + valid sites |
-| 6 | 06_create_synthetic_provider_excel.R | valid sites | provider xlsx |
+2. `02_og_profile.R` - runs on the secure server against the real post-merge
+   cohort (`og_cohort_cwt_2015_2022.rds`). Extracts disclosure-safe aggregate
+   distributions - patient/tumour marginals, the pathway mix by stage x subtype,
+   treatment-timing intervals, trust/hospital volume, and the CWT per-record
+   structure - and writes `og_profile_for_synthetic.rds` plus `og_minimal_spec.rds`.
+   The profile is what makes the synthetic data resemble the real cohort; without
+   it the generator falls back to built-in defaults.
 
-Scripts 01 and 02 read the real cohort and so run on-server; only the two
-artefacts they emit (the spec and the aggregate profile) need to leave the
-server. Scripts 03-06 use only those artefacts and run anywhere.
+3. `03_og_generate.R` - runs anywhere, no real data needed. Sources 01, reads the
+   profile/spec if present, and builds the synthetic Table A (with pathway
+   assigned conditional on stage x subtype) and Table B (CWT records with
+   modality consistent with each patient's pathway), then runs `og_cwt_merge()`.
+   Saves the three outputs as `.rds` and `.dta`.
 
-Script 01 always writes the spec (it has no data dependency). It only rebuilds
-the real reference cohort if the full ICON anchor set is present in `Data/ICON`,
-so the pipeline still runs with just `og_cohort_cwt_2015_2022.rds` in place.
+4. `04_og_validate.R` - sources 01, reads the synthetic outputs and the profile,
+   and prints conformance, internal-consistency, pathway-mix and audit-target
+   checks.
 
-## Stata format check
+Typical flow: run 02 on the server to refresh the profile, take the profile out
+through output checking, then run 03 and 04 anywhere. If you only need a
+plausible synthetic cohort and do not care about matching the real marginals,
+run 03 and 04 with no profile present (the defaults are clinically shaped).
 
-`Stata/01_data_format_checks.do` confirms the two synthetic `.dta` files are in
-the shape the OG merge and provider scripts expect (variable presence, storage
-types, parseable CWT dates, C15x/C16x site codes, merge-key overlap). Run it
-after script 03:
+## Running the minimal merge on the real data
 
-```stata
-global syn "Data/synthetic"
-do "Stata/01_data_format_checks.do"
+`condense_icon_to_minimal()` in script 01 reduces the full ICON
+`og_cohort_cwt_2015_2022.rds` to the minimal Table A, deriving `cci_group` from
+`rcs_ch_score` and `tumour_site_grp` from `cancer_subtype` if they are absent.
+You can then re-run `og_cwt_merge()` on the condensed real cohort and confirm it
+reproduces the audit tables, which is the cross-check that the minimal merge is
+faithful to the full pipeline:
+
+```r
+source("01_og_minimal_merge.R")
+full <- readRDS("E:/Data_PHE/Extracts/#2045_ICON_TACTIC/Derived/og_cohort_cwt_2015_2022.rds")
+minimal <- condense_icon_to_minimal(full)
+# minimal already carries the merge outputs from the full pipeline; to re-run the
+# merge itself you also need the raw CWT records as Table B.
 ```
 
-## Dependencies
+## Outputs (written to `Data/synthetic/`)
 
-R packages: tidyverse, lubridate, haven, writexl, arrow, here.
+- `og_ncras_treatment_synthetic.rds/.dta` - Table A, the registry + treatment
+  cohort (left side of the merge), realistic on its own.
+- `og_cwt_records_synthetic.rds/.dta` - Table B, the raw CWT records (right
+  side), one row per recorded treatment event, dates as dd/mm/yyyy.
+- `og_cohort_synthetic.rds/.dta` - the merged analysis cohort, with the CWT
+  decision-to-treat node attached and the audit categories derived.
+- `og_profile_for_synthetic.rds`, `og_minimal_spec.rds` - from script 02.
+
+## What is reproduced, and one known simplification
+
+The pathway model reproduces the audit numbers: stage-1-3 curative ~50%,
+any-treatment ~75%, with SCC highest on definitive chemoRT, gastric highest on
+surgery-only, matching the real cohort. The merge reproduces the modality /
+pathway matching, the neoadjuvant primary-modality tie-break, and the
+`dtt_valid` logic.
+
+One deliberate simplification: the generator places the chemo and RT arms of a
+definitive-chemoRT course close together, so synthetic `dtt_valid` for that
+pathway is ~100%, where the real cohort sits at ~84% because the two arms start
+weeks apart. The synthetic is cleaner than reality here; this is flagged rather
+than forced, since a minimal example does not need to reproduce every timing
+quirk. If you need that fidelity, widen the sact-to-rt gap for the definitive
+chemoRT branch in script 03.
