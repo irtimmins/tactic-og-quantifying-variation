@@ -277,3 +277,4 @@ all_matched %>% distinct(STUDY_ID, charlson_condition) %>%
 # -----------------------------------------------------------------------------
 saveRDS(og_cci, paste0(base_dir, "og_cci_2015_2022.rds"))
 cat("\nSaved og_cci_2015_2022.rds (", nrow(og_cci), "patients )\n")
+

@@ -430,7 +430,7 @@ count(ncras_og, ps_num)
 cat("\nCNS distribution:\n")
 count(ncras_og, cnsinvolved)
 
-# Overwrite saved object with COSD variables included
+# Saved with COSD variables included
 saveRDS(ncras_og,
         "E:/Data_PHE/Extracts/#2045_ICON_TACTIC/Derived/ncras_og_2015_2022.rds")
 
@@ -587,7 +587,7 @@ hes_apc_raw <- readRDS(
   "E:/Data_PHE/Extracts/#2045_ICON_TACTIC/Derived/hes_apc_og_2014_2022.rds"
 )
 
-names(hes_apc_raw)
+#names(hes_apc_raw)
 #View(hes_apc_raw[1:100,])
 # Helper: normalise OPCS codes for consistent matching
 normalise_opcs <- function(x) str_replace_all(str_to_upper(as.character(x)), "\\.", "")
@@ -717,7 +717,6 @@ saveRDS(
 
 hes_op_raw <- readRDS( "E:/Data_PHE/Extracts/#2045_ICON_TACTIC/Derived/hes_op_og_2014_2022.rds")
 #hes_op_raw %>% View()
-
 
 cat("HES-OP rows (OG cohort, attended):", nrow(hes_op_raw), "\n")
 cat("Patients:                         ", n_distinct(hes_op_raw$STUDY_ID), "\n")
@@ -899,7 +898,7 @@ hes_og_surgery_episodes %>%
 surgery_anchor <- ncras_og %>%
   select(pseudo_patientid, diagmdy, stage_clean) %>%
   left_join(
-    hes_og_surgery_episodes %>% filter(!emergency),
+    hes_og_surgery_episodes,
     by = "pseudo_patientid"
   ) %>%
   mutate(days_dx_to_surg = as.integer(surgery_date - diagmdy)) %>%
@@ -922,7 +921,7 @@ surgery_anchor <- ncras_og %>%
 #names(surgery_anchor)  
   select(pseudo_patientid, surgery_date, surgery_type, surgery_class,
          opcs_primary, all_og_opcs, PROCODE3, SITETRET,
-         days_dx_to_surg, curative_surgery, "ADMIMETH", "emergency")
+         days_dx_to_surg, curative_surgery, ADMIMETH, emergency)
 names(surgery_anchor)
 
 saveRDS(surgery_anchor, "E:/Data_PHE/Extracts/#2045_ICON_TACTIC/Derived/og_surgery_anchor_2015_2022.rds")
@@ -956,10 +955,9 @@ left_join(emresd_anchor, by = "pseudo_patientid") %>%
   
   # --- Surgery ---------------------------------------------------------------
 left_join(surgery_anchor %>%
-            select(pseudo_patientid, surgery_date, surgery_type,
-                   surgery_class, opcs_primary, PROCODE3, SITETRET, 
-                   ADMIMETH , emergency,
-                   days_dx_to_surg, curative_surgery),
+            select(pseudo_patientid, surgery_date, surgery_type, surgery_class,
+                   opcs_primary, PROCODE3, SITETRET, days_dx_to_surg, curative_surgery,
+                   emergency),
           by = "pseudo_patientid") %>%
   
   # --- Waiting time variables ------------------------------------------------
@@ -981,8 +979,9 @@ saveRDS(
   "E:/Data_PHE/Extracts/#2045_ICON_TACTIC/Derived/og_cohort_ncras_hes_2015_2022.rds"
 )
 
-test <- readRDS("E:/Data_PHE/Extracts/#2045_ICON_TACTIC/Derived/og_cohort_ncras_hes_2015_2022.rds")
-names(test)
+#test <- readRDS("E:/Data_PHE/Extracts/#2045_ICON_TACTIC/Derived/og_cohort_ncras_hes_2015_2022.rds")
+#names(test)
+
 # --- Waiting time summaries -------------------------------------------------
 og_cohort %>%
   summarise(

@@ -286,7 +286,7 @@ rtds_test <- read_csv(
 )
 
 names(rtds_test)
-View(rtds_test)
+#View(rtds_test)
 # Key fields to check
 rtds_test %>%
   select(any_of(c(
@@ -480,6 +480,91 @@ sort(summary(as.factor(rtds_og$ORGCODEPROVIDER)))
 endoscopy_anchor_combined <- readRDS("E:/Data_PHE/Extracts/#2045_ICON_TACTIC/Derived/OG_endoscopy_anchor_combined.rds")
 emresd_anchor <- readRDS("E:/Data_PHE/Extracts/#2045_ICON_TACTIC/Derived/OG_emresd_anchor.rds")
 
+# =============================================================================
+# 9b. HES chemotherapy anchor (supplements SACT)
+# SACT misses chemo delivery for a material group (coverage gaps, trial
+# regimens, earlier years); HES APC records the delivery episode via OPCS
+# X70-X74 and ICD-10 Z51.1. HES is a supplement, not a replacement: SACT stays
+# primary (it carries regimen, intent, benchmark group), HES fills where SACT
+# is absent, and the chemo date is SACT-preferred. chemo_source (sact/hes/both)
+# keeps provenance auditable; HES-only chemo carries no benchmark/intent.
+# =============================================================================
+hes_apc <- readRDS("E:/Data_PHE/Extracts/#2045_ICON_TACTIC/Derived/hes_apc_og_2014_2022.rds")
+
+opcs_chemo_delivery <- c("X701","X702","X703","X704","X709",
+                         "X711","X712","X713","X714","X719",
+                         "X721","X722","X723","X724","X725","X726","X727",
+                         "X728","X729",
+                         "X731","X732","X738","X739",
+                         "X741","X742","X743","X744","X748","X749")
+icd_chemo_attendance <- c("Z511")
+
+hes_sub <- hes_apc %>%
+  mutate(STUDY_ID = as.character(STUDY_ID)) %>%
+  filter(STUDY_ID %in% ncras_og_ids)
+
+hes_opcs <- hes_sub %>%
+  select(STUDY_ID, EPISTART, starts_with("OPERTN_")) %>%
+  pivot_longer(starts_with("OPERTN_"), names_to = "pos",
+               values_to = "opcs", names_prefix = "OPERTN_") %>%
+  left_join(
+    hes_sub %>%
+      select(STUDY_ID, EPISTART, starts_with("OPDATE_")) %>%
+      pivot_longer(starts_with("OPDATE_"), names_to = "pos",
+                   values_to = "opdate", names_prefix = "OPDATE_"),
+    by = c("STUDY_ID", "EPISTART", "pos"), relationship = "many-to-many"
+  ) %>%
+  mutate(opcs4 = str_to_upper(str_remove_all(str_trim(opcs), "\\."))) %>%
+  filter(opcs4 %in% opcs_chemo_delivery) %>%
+  transmute(STUDY_ID, chemo_date = coalesce(as.Date(opdate), as.Date(EPISTART)))
+
+hes_icd <- hes_sub %>%
+  select(STUDY_ID, EPISTART, starts_with("DIAG_4_")) %>%
+  pivot_longer(starts_with("DIAG_4_"), names_to = "pos",
+               values_to = "icd", names_prefix = "DIAG_4_") %>%
+  mutate(icd4 = str_to_upper(str_sub(str_remove_all(str_trim(icd), "\\."), 1, 4))) %>%
+  filter(icd4 %in% icd_chemo_attendance) %>%
+  transmute(STUDY_ID, chemo_date = as.Date(EPISTART))
+
+hes_chemo_anchor <- bind_rows(hes_opcs, hes_icd) %>%
+  filter(!is.na(chemo_date)) %>%
+  rename(pseudo_patientid = STUDY_ID) %>%
+  inner_join(ncras_og %>% select(pseudo_patientid, diagmdy),
+             by = "pseudo_patientid") %>%
+  mutate(days_dx_to_hes_chemo = as.integer(chemo_date - diagmdy)) %>%
+  filter(days_dx_to_hes_chemo >= -30, days_dx_to_hes_chemo <= tx_window_days) %>%
+  arrange(pseudo_patientid, chemo_date) %>%
+  distinct(pseudo_patientid, .keep_all = TRUE) %>%
+  transmute(pseudo_patientid, hes_chemo_date = chemo_date, days_dx_to_hes_chemo)
+
+cat("Patients with in-window HES chemo:", nrow(hes_chemo_anchor), "\n")
+
+# combine SACT and HES: SACT-preferred date, provenance kept
+chemo_anchor <- ncras_og %>%
+  select(pseudo_patientid, diagmdy) %>%
+  left_join(sact_anchor %>% select(pseudo_patientid, sact_date, days_dx_to_sact,
+                                   BENCHMARK_GROUP, benchmark_group_lwr,
+                                   INTENT_OF_TREATMENT_V3, CHEMO_RADIATION,
+                                   ORGANISATION_CODE_OF_PROVIDER),
+            by = "pseudo_patientid") %>%
+  left_join(hes_chemo_anchor, by = "pseudo_patientid") %>%
+  filter(!is.na(sact_date) | !is.na(hes_chemo_date)) %>%
+  mutate(
+    chemo_source     = case_when(
+      !is.na(sact_date) &  !is.na(hes_chemo_date) ~ "both",
+      !is.na(sact_date) &   is.na(hes_chemo_date) ~ "sact",
+      TRUE                                        ~ "hes"
+    ),
+    chemo_date       = coalesce(sact_date, hes_chemo_date),
+    days_dx_to_chemo = as.integer(chemo_date - diagmdy)
+  )
+
+cat("Chemo anchor source split:\n")
+chemo_anchor %>% count(chemo_source) %>%
+  mutate(pct = round(100 * n / sum(n), 1)) %>% print()
+saveRDS(chemo_anchor,
+        "E:/Data_PHE/Extracts/#2045_ICON_TACTIC/Derived/og_chemo_anchor_2015_2022.rds")
+
 
 og_cohort <- ncras_og %>%
   
@@ -505,10 +590,18 @@ left_join(
   by = "pseudo_patientid"
 ) %>%
   
-  # --- SACT ------------------------------------------------------------------
+  # --- SACT (+ HES chemo supplement) -----------------------------------------
+# chemo_anchor combines the SACT anchor with HES delivery codes (OPCS X70-74,
+# ICD-10 Z51.1); see the HES chemo anchor block above. sact_date here is the
+# SACT-preferred combined chemo date, had_sact below becomes SACT-or-HES, and
+# chemo_source records provenance. hes_chemo_date is carried so the curative-RT
+# concurrency guard can require HES-only chemo to sit near the RT before it
+# reclassifies a patient to definitive chemoRT.
 left_join(
-  sact_anchor %>%
-    select(pseudo_patientid, sact_date, days_dx_to_sact,
+  chemo_anchor %>%
+    select(pseudo_patientid,
+           sact_date = chemo_date, days_dx_to_sact = days_dx_to_chemo,
+           chemo_source, hes_chemo_date,
            BENCHMARK_GROUP, benchmark_group_lwr,
            INTENT_OF_TREATMENT_V3, CHEMO_RADIATION,
            ORGANISATION_CODE_OF_PROVIDER),
@@ -531,6 +624,19 @@ mutate(
   had_rt               = !is.na(rt_date),
   had_curative_rt      = !is.na(rt_date) & rt_curative == TRUE,
   had_palliative_rt    = !is.na(rt_date) & rt_curative == FALSE,
+  
+  # chemo provenance ("sact"/"hes"/"both") arrives from chemo_anchor via the
+  # join above; HES-only chemo carries no benchmark/intent, so regimen-specific
+  # analysis should exclude chemo_source == "hes".
+  # chemo eligible to define a non-surgical definitive-chemoRT pathway. SACT
+  # chemo always counts; HES-only chemo counts only when it sits within 28 days
+  # of the curative RT, so a temporally separate HES chemo episode does not
+  # manufacture definitive chemoRT out of a curative-RT-only patient. The
+  # surgery and no-treatment branches use had_sact directly and are unaffected.
+  had_chemo_for_chemort = had_sact &
+    ( coalesce(chemo_source, "sact") != "hes" |
+        ( !is.na(hes_chemo_date) & !is.na(rt_date) &
+            abs(as.integer(hes_chemo_date - rt_date)) <= 28 ) ),
   
   # --- Treatment sequencing flags ------------------------------------------
   sact_before_surgery = had_sact & had_surgery & sact_date < surgery_date,
@@ -564,9 +670,14 @@ mutate(
     had_surgery & !had_sact & !concurrent_chemo_rt ~ "Surgery only",
     had_surgery                                   ~ "Surgery + other",
     
-    # Non-surgical curative
-    !had_surgery & had_curative_rt & had_sact     ~ "Definitive chemoRT",
-    !had_surgery & had_curative_rt & !had_sact    ~ "Curative RT only",
+    # Non-surgical curative. Definitive chemoRT requires chemo that is part of
+    # the RT course: SACT chemo, or HES-only chemo within 28d of the RT (the
+    # had_chemo_for_chemort guard). A curative-RT patient whose only chemo is a
+    # temporally separate HES episode is "Curative RT only" here (the chemo is
+    # kept as a had_sact/chemo_source flag but does not define the pathway),
+    # rather than mislabelled definitive chemoRT.
+    !had_surgery & had_curative_rt & had_chemo_for_chemort  ~ "Definitive chemoRT",
+    !had_surgery & had_curative_rt & !had_chemo_for_chemort ~ "Curative RT only",
     
     # Palliative / non-curative
     !had_surgery & had_palliative_rt & had_sact   ~ "Palliative chemo + RT",
@@ -661,8 +772,8 @@ mutate(
     !is.na(surv_from_surg_days) &
     (surv_from_surg_days > 365 | died == 0L)
 )  
-  
-  
+
+
 saveRDS(og_cohort,
         "E:/Data_PHE/Extracts/#2045_ICON_TACTIC/Derived/og_cohort_2015_2022.rds")
 
@@ -819,8 +930,6 @@ og_cohort %>%
     )
   ) %>%
   count(missing_reason)
-
-
 
 
 og_cohort %>%
