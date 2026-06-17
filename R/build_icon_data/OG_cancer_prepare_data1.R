@@ -10,7 +10,7 @@ library(stringr)
 library(forcats)
 library(purrr)
 library(lubridate)
-
+library(readr)
 
 # =============================================================================
 # 1. NCRAS: OG cancer cohort
@@ -222,7 +222,6 @@ mutate(
 
 )
 
-
 # Checks:
 
 # --- Tumour site group -------------------------------------------------------
@@ -357,9 +356,6 @@ print(count(ncras_og, tumour_site_grp, stage_clean))
 
 ncras_og_ids <- ncras_og %>% distinct(pseudo_patientid) %>% pull()
 
-# saveRDS(ncras_og,
-#         "E:/Data_PHE/Extracts/#2045_ICON_TACTIC/Derived/ncras_og_2015_2022.rds")
-# 
 
 
 # =============================================================================
@@ -553,10 +549,13 @@ stopifnot(length(hes_apc_file_list) > 0)
 op_cols     <- paste0("OPERTN_", str_pad(1:24, 2, pad = "0"))
 opdate_cols <- paste0("OPDATE_", str_pad(1:24, 2, pad = "0"))
 
+# secondary diagnosis fields, needed for the Charlson comorbidity index (1d)
+diag_cols <- paste0("DIAG_4_", str_pad(1:20, 2, pad = "0"))
+
 hes_cols_select <- c(
   "STUDY_ID", "ADMIDATE", "ADMIMETH", "PROCODE3", "SITETRET",
   "EPISTART", "EPIORDER", "EPITYPE",
-  op_cols, opdate_cols
+  op_cols, opdate_cols, diag_cols
 )
 
 hes_apc_raw <- map_dfr(
@@ -570,7 +569,8 @@ hes_apc_raw <- map_dfr(
         EPISTART = as.Date(EPISTART),
         ADMIDATE = as.Date(ADMIDATE),
         across(all_of(op_cols),     as.character),
-        across(all_of(opdate_cols), as.Date)
+        across(all_of(opdate_cols), as.Date),
+        across(any_of(diag_cols),   as.character)
       )
   },
   .progress = TRUE
@@ -588,7 +588,7 @@ hes_apc_raw <- readRDS(
 )
 
 names(hes_apc_raw)
-View(hes_apc_raw[1:100,])
+#View(hes_apc_raw[1:100,])
 # Helper: normalise OPCS codes for consistent matching
 normalise_opcs <- function(x) str_replace_all(str_to_upper(as.character(x)), "\\.", "")
 
@@ -716,7 +716,7 @@ saveRDS(
 )
 
 hes_op_raw <- readRDS( "E:/Data_PHE/Extracts/#2045_ICON_TACTIC/Derived/hes_op_og_2014_2022.rds")
-hes_op_raw %>% View()
+#hes_op_raw %>% View()
 
 
 cat("HES-OP rows (OG cohort, attended):", nrow(hes_op_raw), "\n")

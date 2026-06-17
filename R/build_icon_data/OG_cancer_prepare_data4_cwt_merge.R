@@ -12,12 +12,15 @@ library(lubridate)
 ncras_og <- readRDS("E:/Data_PHE/Extracts/#2045_ICON_TACTIC/Derived/ncras_og_2015_2022.rds")
 ncras_og_ids <- ncras_og %>% distinct(pseudo_patientid) %>% pull()
 
-
-
 og_cohort <- readRDS("E:/Data_PHE/Extracts/#2045_ICON_TACTIC/Derived/og_cohort_2015_2022.rds")
 
+# attach the RCS Charlson comorbidity lookup built in script 1d
+og_cci <- readRDS("E:/Data_PHE/Extracts/#2045_ICON_TACTIC/Derived/og_cci_2015_2022.rds")
+og_cohort <- og_cohort %>%
+  left_join(og_cci, by = "pseudo_patientid")
 
-
+summary(as.factor(og_cohort$tx_pathway))
+names(og_cohort)
 # What CWT files do you have?
 list.files(
   "E:/Data_PHE/Extracts/#2045_ICON_TACTIC/CWT/",
@@ -35,7 +38,7 @@ cwt_test <- open_dataset(
 
 names(cwt_test)
 
-cwt_test %>% View()
+#cwt_test %>% View()
 
 cwt_test %>%
   count(modality, sort = TRUE)
@@ -249,18 +252,18 @@ cwt_validation %>%
 # --- CWT treat date vs our first_tx_date -----------------------------------
 cat("\nCWT treat date vs our first_tx_date (days difference):\n")
 cwt_validation %>%
-  filter(!is.na(cwt_vs_our_tx)) %>%
+  filter(!is.na(cwt_vs_first_tx)) %>%
   summarise(
     n              = n(),
-    n_exact_match  = sum(cwt_vs_our_tx == 0),
-    pct_exact      = round(100 * mean(cwt_vs_our_tx == 0), 1),
-    n_within_5     = sum(abs(cwt_vs_our_tx) <= 5),
-    pct_within_5   = round(100 * mean(abs(cwt_vs_our_tx) <= 5), 1),
-    n_within_14    = sum(abs(cwt_vs_our_tx) <= 14),
-    pct_within_14  = round(100 * mean(abs(cwt_vs_our_tx) <= 14), 1),
-    median_diff    = median(cwt_vs_our_tx),
-    p25            = quantile(cwt_vs_our_tx, 0.25),
-    p75            = quantile(cwt_vs_our_tx, 0.75)
+    n_exact_match  = sum(cwt_vs_first_tx == 0),
+    pct_exact      = round(100 * mean(cwt_vs_first_tx == 0), 1),
+    n_within_5     = sum(abs(cwt_vs_first_tx) <= 5),
+    pct_within_5   = round(100 * mean(abs(cwt_vs_first_tx) <= 5), 1),
+    n_within_14    = sum(abs(cwt_vs_first_tx) <= 14),
+    pct_within_14  = round(100 * mean(abs(cwt_vs_first_tx) <= 14), 1),
+    median_diff    = median(cwt_vs_first_tx),
+    p25            = quantile(cwt_vs_first_tx, 0.25),
+    p75            = quantile(cwt_vs_first_tx, 0.75)
   ) %>% print()
 
 # --- Negative DTT-to-treatment by pathway ----------------------------------
