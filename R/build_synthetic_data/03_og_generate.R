@@ -203,8 +203,10 @@ assign_pathway <- function(stage, subtype) {
   sample(names(p), 1, prob = p / sum(p))
 }
 
-# vectorise over the (stage, subtype) cells for speed
-A$tx_pathway <- {
+# vectorise over the (stage, subtype) cells for speed. This is the LATENT
+# intended pathway - it drives date placement but is dropped before output; the
+# real tx_pathway is re-derived from the dates/flags by og_derive_pathway().
+A$tx_pathway_latent <- {
   key <- paste(A$stage_clean, coalesce(A$cancer_subtype, "Unknown"))
   out <- character(n)
   for (k in unique(key)) {
@@ -225,7 +227,13 @@ A$tx_pathway <- {
 }
 
 # =============================================================================
-# Treatment anchor dates, placed off diagnosis per pathway
+# Treatment dates and descriptors, placed off diagnosis per the latent pathway
+# -----------------------------------------------------------------------------
+# The intended pathway (p) is a latent draw used only to place a realistic set
+# of treatment dates, curative descriptors and provider codes. It is NOT stored
+# on the cohort: og_derive_pathway() re-derives tx_pathway from the dates and
+# flags alone, so the generator and the derivation are kept honest against each
+# other. The realised raw fields are what the rest of the pipeline sees.
 # =============================================================================
 ms_endo <- interval_ms("days_dx_to_endo", 2, 5)     # endoscopy ~ at/just before dx
 ms_dtt  <- interval_ms("wt_dx_to_dtt", 42, 30)
@@ -237,72 +245,85 @@ neoadj_gap_ms <- {
 # endoscopy date: a few days before/around diagnosis
 A$endoscopy_date <- A$diagmdy - rgamma_ms(n, ms_endo[1], ms_endo[2])
 
-# per-pathway dx -> primary-treatment offset (curative clock-stop timing)
+# per-pathway dx -> primary-treatment offset (clock-stop timing)
 dx_to_primary <- rgamma_ms(n, ms_dtt[1] + 14, ms_dtt[2]) +
   round(re_dtt[A$diag_hosp])
 dx_to_primary <- pmax(0L, pmin(dx_to_primary, mc$tx_window_days))
 
+# raw treatment fields: dates, curative descriptors, chemo provenance, providers
 A$emresd_date  <- as.Date(NA); A$surgery_date <- as.Date(NA)
 A$sact_date    <- as.Date(NA); A$rt_date      <- as.Date(NA)
-A$first_tx_date<- as.Date(NA); A$chemo_source <- NA_character_
+A$curative_surgery <- NA; A$rt_curative <- NA; A$chemo_source <- NA_character_
+A$hes_chemo_date   <- as.Date(NA)
+A$surgery_provider <- NA_character_; A$rt_provider <- NA_character_
+A$sact_provider    <- NA_character_
 
-p <- A$tx_pathway
-prim_date <- A$diagmdy + dx_to_primary
+p <- A$tx_pathway_latent   # the latent intended pathway (dropped before output)
+prim_date  <- A$diagmdy + dx_to_primary
 neoadj_gap <- rgamma_ms(n, neoadj_gap_ms[1], neoadj_gap_ms[2])
 
 # EMR/ESD pathways: emresd_date is the clock-stop
 i <- p %in% c("EMR/ESD only","EMR/ESD then surgery")
-A$emresd_date[i] <- prim_date[i]; A$first_tx_date[i] <- prim_date[i]
-A$surgery_date[i & p == "EMR/ESD then surgery"] <-
-  prim_date[i & p == "EMR/ESD then surgery"] + neoadj_gap[i & p == "EMR/ESD then surgery"]
+A$emresd_date[i] <- prim_date[i]
+j <- i & p == "EMR/ESD then surgery"
+A$surgery_date[j] <- prim_date[j] + neoadj_gap[j]
+A$curative_surgery[j] <- TRUE
 
-# neoadjuvant chemo: SACT is the clock-stop, surgery follows
+# neoadjuvant chemo: SACT before surgery
 i <- p == "Surgery + neoadjuvant chemo"
-A$sact_date[i] <- prim_date[i]; A$first_tx_date[i] <- prim_date[i]
-A$surgery_date[i] <- prim_date[i] + neoadj_gap[i]; A$chemo_source[i] <- "sact"
+A$sact_date[i] <- prim_date[i]; A$surgery_date[i] <- prim_date[i] + neoadj_gap[i]
+A$curative_surgery[i] <- TRUE; A$chemo_source[i] <- "sact"
 
-# neoadjuvant chemoRT: pmin(sact,rt) is the clock-stop (set both ~ together)
+# neoadjuvant chemoRT: sact + rt before surgery (rt close to sact)
 i <- p == "Surgery + neoadjuvant chemoRT"
 A$sact_date[i] <- prim_date[i]; A$rt_date[i] <- prim_date[i] + sample(0:10, sum(i), TRUE)
-A$first_tx_date[i] <- prim_date[i]; A$surgery_date[i] <- prim_date[i] + neoadj_gap[i]
-A$chemo_source[i] <- "sact"
-
-# neoadjuvant RT: rt is the clock-stop
-i <- p == "Surgery + neoadjuvant RT"
-A$rt_date[i] <- prim_date[i]; A$first_tx_date[i] <- prim_date[i]
 A$surgery_date[i] <- prim_date[i] + neoadj_gap[i]
+A$curative_surgery[i] <- TRUE; A$rt_curative[i] <- TRUE; A$chemo_source[i] <- "sact"
 
-# adjuvant chemo / surgery only / surgery + other: surgery is the clock-stop
-i <- p %in% c("Surgery + adjuvant chemo","Surgery only","Surgery + other")
-A$surgery_date[i] <- prim_date[i]; A$first_tx_date[i] <- prim_date[i]
-j <- p == "Surgery + adjuvant chemo"
-A$sact_date[j] <- prim_date[j] + sample(40:80, sum(j), TRUE); A$chemo_source[j] <- "sact"
+# neoadjuvant RT: rt before surgery, no chemo
+i <- p == "Surgery + neoadjuvant RT"
+A$rt_date[i] <- prim_date[i]; A$surgery_date[i] <- prim_date[i] + neoadj_gap[i]
+A$curative_surgery[i] <- TRUE; A$rt_curative[i] <- TRUE
 
-# definitive chemoRT: pmin(sact,rt) clock-stop, concurrent
+# adjuvant chemo: surgery first, chemo after
+i <- p == "Surgery + adjuvant chemo"
+A$surgery_date[i] <- prim_date[i]; A$curative_surgery[i] <- TRUE
+A$sact_date[i] <- prim_date[i] + sample(40:80, sum(i), TRUE); A$chemo_source[i] <- "sact"
+
+# surgery only / surgery + other: surgery is the only curative act
+i <- p %in% c("Surgery only","Surgery + other")
+A$surgery_date[i] <- prim_date[i]; A$curative_surgery[i] <- TRUE
+
+# definitive chemoRT: concurrent sact + curative rt, no surgery
 i <- p == "Definitive chemoRT"
 A$sact_date[i] <- prim_date[i]; A$rt_date[i] <- prim_date[i] + sample(0:14, sum(i), TRUE)
-A$first_tx_date[i] <- pmin(A$sact_date[i], A$rt_date[i], na.rm = TRUE)
-A$chemo_source[i] <- "sact"
+A$rt_curative[i] <- TRUE; A$chemo_source[i] <- "sact"
 
-# curative RT only: rt clock-stop
+# curative RT only: curative rt, no chemo, no surgery
 i <- p == "Curative RT only"
-A$rt_date[i] <- prim_date[i]; A$first_tx_date[i] <- prim_date[i]
+A$rt_date[i] <- prim_date[i]; A$rt_curative[i] <- TRUE
 
-# palliative chemo + RT / SACT only / palliative RT only: NO curative clock-stop
-# (first_tx_date stays NA), but the treatment dates exist for the CWT side
+# palliative chemo + RT: chemo + palliative rt, no surgery, no curative clock-stop
 i <- p == "Palliative chemo + RT"
 A$sact_date[i] <- prim_date[i]; A$rt_date[i] <- prim_date[i] + sample(0:30, sum(i), TRUE)
-A$chemo_source[i] <- "sact"
+A$rt_curative[i] <- FALSE; A$chemo_source[i] <- "sact"
+
+# SACT only: chemo, no rt, no surgery
 i <- p == "SACT only"
 A$sact_date[i] <- prim_date[i]; A$chemo_source[i] <- "sact"
+
+# palliative RT only: palliative rt, no chemo, no surgery
 i <- p == "Palliative RT only"
-A$rt_date[i] <- prim_date[i]
+A$rt_date[i] <- prim_date[i]; A$rt_curative[i] <- FALSE
 
-# "No treatment recorded": no anchor dates, no first_tx_date (left as NA)
+# "No treatment recorded": no treatment dates at all
 
-# tx_trust: 3-char trust of the curative treatment (NA for palliative/none)
-A$tx_trust <- if_else(is.na(A$first_tx_date), NA_character_,
-                      substr(draw_trust(n), 1, 3))
+# provider codes for whichever arms occurred (3-char trust embedded in code 1)
+A$surgery_provider[!is.na(A$surgery_date)] <- draw_trust(sum(!is.na(A$surgery_date)))
+A$surgery_provider[!is.na(A$emresd_date) & is.na(A$surgery_provider)] <-
+  draw_trust(sum(!is.na(A$emresd_date) & is.na(A$surgery_provider)))
+A$rt_provider[!is.na(A$rt_date)]     <- draw_trust(sum(!is.na(A$rt_date)))
+A$sact_provider[!is.na(A$sact_date)] <- draw_trust(sum(!is.na(A$sact_date)))
 
 # =============================================================================
 # Survival + death
@@ -318,6 +339,19 @@ surv_mult <- case_when(
 surv_days <- pmax(1L, as.integer(surv_days * surv_mult))
 A$died   <- as.integer(runif(n) < pmin(0.95, 0.55 + 0.0002 * surv_days * (surv_mult < 1)))
 A$finmdy <- A$diagmdy + surv_days
+
+# =============================================================================
+# Stage 1 derivation: build tx_pathway, first_tx_date and tx_trust from the raw
+# treatment fields. The latent intended pathway is dropped here - everything
+# downstream uses the DERIVED pathway, exactly as the real pipeline does.
+# =============================================================================
+A_raw <- A %>% select(any_of(og_raw_cols))
+A_der <- og_derive_pathway(A_raw)
+
+# how often does the derived pathway match the latent intended one? (a check
+# that the generator's date placement and the derivation are consistent)
+cat("\nDerived vs latent pathway agreement:",
+    round(100 * mean(A_der$tx_pathway == A$tx_pathway_latent), 1), "%\n")
 
 # =============================================================================
 # Table B - synthetic raw CWT records, modality consistent with the pathway
@@ -359,27 +393,29 @@ draw_modality <- function(pw_vec) {
 }
 
 # which CWT clock-stop date does the anchor sit on? for curative pathways it is
-# first_tx_date; for palliative/none it is the recorded treatment date
-A$cwt_event_date <- A$first_tx_date
-i <- is.na(A$cwt_event_date)
-A$cwt_event_date[i] <- pmin(A$sact_date[i], A$rt_date[i], A$surgery_date[i],
-                            A$emresd_date[i], na.rm = TRUE)
+# first_tx_date; for palliative/none it is the earliest recorded treatment date.
+# All fields come from the DERIVED cohort.
+A_der$cwt_event_date <- A_der$first_tx_date
+i <- is.na(A_der$cwt_event_date)
+A_der$cwt_event_date[i] <- pmin(A_der$sact_date[i], A_der$rt_date[i],
+                                A_der$surgery_date[i], A_der$emresd_date[i],
+                                na.rm = TRUE)
 
-has_cwt <- runif(n) < cov & !is.na(A$cwt_event_date)
+has_cwt <- runif(n) < cov & !is.na(A_der$cwt_event_date)
 idx     <- which(has_cwt)
 m       <- length(idx)
 
 # DTT precedes the treatment date by the dx->dtt vs dx->tx gap; approximate by
 # placing DTT a short interval before the event date
 dtt_lead <- rgamma_ms(m, 14, 10)
-dtt_anchor <- A$cwt_event_date[idx] - dtt_lead
+dtt_anchor <- A_der$cwt_event_date[idx] - dtt_lead
 
 # agreement offset between cwt_treat_date and first_tx_date
 u <- runif(m); delta <- integer(m)
 mid <- u >= p_exact & u < p_w14; far <- u >= p_w14
 delta[mid] <- sample(c(-14:-1, 1:14), sum(mid), TRUE)
 delta[far] <- sample(c(-60:-15, 15:60), sum(far), TRUE)
-treat_anchor <- A$cwt_event_date[idx] + delta
+treat_anchor <- A_der$cwt_event_date[idx] + delta
 
 mdt_have <- runif(m) < p_mdt
 mdt_anchor <- as.Date(rep(NA, m), origin = "1970-01-01")
@@ -387,13 +423,13 @@ mdt_anchor[mdt_have] <- dtt_anchor[mdt_have] - sample(0:21, sum(mdt_have), TRUE)
 
 crtp  <- dtt_anchor - sample(20:60, m, TRUE)
 fseen <- crtp + sample(0:14, m, TRUE)
-site  <- ifelse(A$tumour_site_grp[idx] == "gastric",
+site  <- ifelse(A_der$tumour_site_grp[idx] == "gastric",
                 sample(c("C160","C161","C162","C163","C164","C165","C166","C169"), m, TRUE),
                 sample(c("C150","C151","C152","C153","C154","C155","C159"), m, TRUE))
-modal <- draw_modality(A$tx_pathway[idx])
+modal <- draw_modality(A_der$tx_pathway[idx])
 
 anchor <- tibble(
-  pseudo_patientid   = A$pseudo_patientid[idx],
+  pseudo_patientid   = A_der$pseudo_patientid[idx],
   site_icd10         = site,
   modality           = modal,
   crtp_date          = fmt(crtp),
@@ -409,9 +445,9 @@ k <- as.integer(sample_cat(recs, m))
 extra_idx <- which(k > 1)
 extra <- map_dfr(extra_idx, function(j) {
   mm <- k[j] - 1L
-  base_dtt <- A$cwt_event_date[idx[j]] + cumsum(sample(30:120, mm, TRUE))
+  base_dtt <- A_der$cwt_event_date[idx[j]] + cumsum(sample(30:120, mm, TRUE))
   tibble(
-    pseudo_patientid   = A$pseudo_patientid[idx[j]],
+    pseudo_patientid   = A_der$pseudo_patientid[idx[j]],
     site_icd10         = anchor$site_icd10[j],
     modality           = sample(c("02","05","07","08","09"), mm, TRUE),
     crtp_date          = fmt(base_dtt - sample(20:60, mm, TRUE)),
@@ -423,13 +459,12 @@ extra <- map_dfr(extra_idx, function(j) {
 syn_cwt <- bind_rows(anchor, extra) %>% arrange(pseudo_patientid)
 
 # =============================================================================
-# Run the shared minimal merge and report
+# Stage 2: run the shared merge on the derived cohort, then report
 # =============================================================================
-A_tableA   <- A %>% select(any_of(og_minimal_cols))
-syn_cohort <- og_cwt_merge(A_tableA, syn_cwt)
+syn_cohort <- og_cwt_merge(A_der, syn_cwt)
 
-cat("\nSynthetic pathway mix:\n")
-A %>% count(tx_pathway) %>% mutate(pct = round(100*n/sum(n),1)) %>%
+cat("\nSynthetic pathway mix (derived):\n")
+A_der %>% count(tx_pathway) %>% mutate(pct = round(100*n/sum(n),1)) %>%
   arrange(desc(n)) %>% print(n = 20)
 
 cat("\nAudit Table 4 (synthetic, stage 1-3):\n")
@@ -449,18 +484,24 @@ cat("dtt_valid TRUE share (non-EMR pathways):",
     round(100*mean(syn_cohort$dtt_valid, na.rm = TRUE),1), "%\n")
 
 # =============================================================================
-# Save: Table A (left), Table B (CWT), and the merged cohort
+# Save the three cohort stages + the CWT records
+#   _raw     the raw registry+treatment inputs (dates, descriptors, providers)
+#   _derived the cohort after og_derive_pathway() (flags, tx_pathway, tx_trust)
+#   _cohort  the merged analysis cohort after og_cwt_merge()
 # =============================================================================
-saveRDS(A_tableA,   paste0(base_dir, "og_ncras_treatment_synthetic.rds"))
+saveRDS(A_raw,      paste0(base_dir, "og_ncras_treatment_synthetic.rds"))
+saveRDS(A_der,      paste0(base_dir, "og_derived_synthetic.rds"))
 saveRDS(syn_cwt,    paste0(base_dir, "og_cwt_records_synthetic.rds"))
 saveRDS(syn_cohort, paste0(base_dir, "og_cohort_synthetic.rds"))
 
 to_stata <- function(df) df %>%
   mutate(across(where(is.factor), as.character),
          across(where(is.logical), as.integer))
-write_dta(to_stata(A_tableA),   paste0(base_dir, "og_ncras_treatment_synthetic.dta"))
+write_dta(to_stata(A_raw),      paste0(base_dir, "og_ncras_treatment_synthetic.dta"))
+write_dta(to_stata(A_der),      paste0(base_dir, "og_derived_synthetic.dta"))
 write_dta(to_stata(syn_cwt),    paste0(base_dir, "og_cwt_records_synthetic.dta"))
 write_dta(to_stata(syn_cohort), paste0(base_dir, "og_cohort_synthetic.dta"))
 
-cat("\nSaved Table A (", nrow(A_tableA), "rows), Table B CWT (", nrow(syn_cwt),
+cat("\nSaved raw Table A (", nrow(A_raw), "rows), derived cohort (",
+    nrow(A_der), "rows), Table B CWT (", nrow(syn_cwt),
     "rows), merged cohort (", nrow(syn_cohort), "rows).\n")

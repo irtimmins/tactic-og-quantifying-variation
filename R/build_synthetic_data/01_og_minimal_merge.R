@@ -1,31 +1,33 @@
 # =============================================================================
-# OG cancer - minimal CWT merge (shared engine)
+# OG cancer - pathway derivation + CWT merge (shared engine)
 # -----------------------------------------------------------------------------
-# A self-contained, minimal version of the CWT merge that the full pipeline
-# (OG_cancer_prepare_data4_cwt_merge.R) performs. It operates on:
+# The two transparent coding stages the full pipeline performs, written once and
+# shared between synthetic data and the real condensed cohort:
 #
-#   Table A  a minimal registry + treatment cohort (one row per patient), with
-#            the treatment anchor dates, the derived tx_pathway, and first_tx_date
-#   Table B  raw CWT records (one row per recorded treatment event, dates as
-#            "dd/mm/yyyy" character, exactly as the partitioned dataset stores them)
+#   Stage 1  og_derive_pathway()  takes a RAW cohort - treatment dates, curative
+#            descriptors, chemo provenance, and per-modality provider codes - and
+#            derives the treatment flags, the sequencing flags, tx_pathway,
+#            first_tx_date, and tx_trust. The pathway is a function of the flags
+#            and dates alone; nothing is pre-supplied.
 #
-# and returns Table A with the CWT decision-to-treat (DTT) node attached and the
-# waiting-time + audit fields derived. The same function runs on:
-#   - synthetic Table A / Table B from the generator, and
-#   - the real ICON cohort once condensed to the minimal column set (see
-#     condense_icon_to_minimal() below),
-# so the merge logic is written once and shared.
+#   Stage 2  og_cwt_merge()  takes the derived cohort (Table A) plus the raw CWT
+#            records (Table B) and attaches the decision-to-treat (DTT) node,
+#            the waiting-time family, dtt_valid, and the audit categories.
 #
-# This is deliberately the *minimal* merge: modality-to-pathway matching, the
-# neoadjuvant primary-modality tie-break, the in-window DTT filter, and the
-# audit categorisation. It does not reproduce the descriptive/diagnostic blocks
-# of the full script.
+# Table B holds one row per recorded CWT treatment event, dates as "dd/mm/yyyy"
+# character exactly as the partitioned dataset stores them.
+#
+# Splitting the work this way means every coding stage is inspectable: the raw
+# cohort shows the inputs, og_derive_pathway() shows how the pathway and trust
+# are built from them, and og_cwt_merge() shows the linkage. The same two
+# functions run on synthetic data and on the real cohort condensed to the raw
+# column set (see condense_icon_to_minimal / condense_icon_to_raw below).
 # =============================================================================
 
 library(tidyverse)
 
 # -----------------------------------------------------------------------------
-# Constants - kept identical to the full merge so behaviour matches
+# Constants - kept identical to the full pipeline so behaviour matches
 # -----------------------------------------------------------------------------
 og_merge_const <- list(
   tx_window_days   = 270L,
@@ -88,13 +90,135 @@ og_pathway_primary <- c(
   "Palliative RT only" = "radiotherapy", "No treatment recorded" = "palliative"
 )
 
+# =============================================================================
+# Stage 1: derive the treatment pathway and the treatment trust from the raw
+#          treatment flags, dates and provider codes
 # -----------------------------------------------------------------------------
-# og_cwt_merge(A, cwt, const)
-#   A    : minimal Table A (see og_minimal_cols below for the contract)
+# This is the transparent classification step. It takes a "raw" cohort - one
+# carrying the individual treatment dates, the curative descriptors, the chemo
+# provenance, and the per-modality provider codes - and builds, in order:
+#   - the treatment-presence flags (had_surgery, had_sact, ...)
+#   - the sequencing flags (sact_before_surgery, concurrent_chemo_rt, ...)
+#   - tx_pathway, via the case_when ladder
+#   - first_tx_date, the clock-stop date for the pathway
+#   - tx_trust, the provider of the clock-stop treatment
+# Mirrors OG_cancer_prepare_data2_sact_rtds.R so the same derivation runs on the
+# real condensed cohort as on synthetic data. Nothing here is pre-supplied: the
+# pathway is a function of the flags and dates alone.
+#
+# The raw cohort must carry (see og_raw_cols): the registry descriptors, the
+# treatment dates (endoscopy/emresd/surgery/sact/rt), the curative descriptors
+# (curative_surgery, rt_curative), chemo_source (+ hes_chemo_date if present),
+# and the provider codes surgery_provider (PROCODE3-style) and rt_provider
+# (ORGCODEPROVIDER-style).
+# -----------------------------------------------------------------------------
+og_derive_pathway <- function(raw, const = og_merge_const) {
+  
+  # hes_chemo_date is optional; if absent treat it as missing so the chemo-RT
+  # concurrency guard simply falls back to "SACT chemo always counts"
+  if (!"hes_chemo_date" %in% names(raw)) raw$hes_chemo_date <- as.Date(NA)
+  if (!"chemo_source"   %in% names(raw)) raw$chemo_source   <- NA_character_
+  
+  raw %>%
+    mutate(
+      # --- treatment-presence flags ----------------------------------------
+      had_emresd           = !is.na(emresd_date),
+      had_surgery          = !is.na(surgery_date),
+      had_curative_surgery = !is.na(surgery_date) & curative_surgery == TRUE,
+      had_sact             = !is.na(sact_date),
+      had_rt               = !is.na(rt_date),
+      had_curative_rt      = !is.na(rt_date) & rt_curative == TRUE,
+      had_palliative_rt    = !is.na(rt_date) & rt_curative == FALSE,
+      
+      # chemo eligible to define a non-surgical definitive-chemoRT pathway:
+      # SACT chemo always counts; HES-only chemo only when within 28 days of RT
+      had_chemo_for_chemort = had_sact &
+        ( coalesce(chemo_source, "sact") != "hes" |
+            ( !is.na(hes_chemo_date) & !is.na(rt_date) &
+                abs(as.integer(hes_chemo_date - rt_date)) <= 28 ) ),
+      
+      # --- sequencing flags ------------------------------------------------
+      sact_before_surgery = had_sact & had_surgery & sact_date < surgery_date,
+      sact_after_surgery  = had_sact & had_surgery & sact_date > surgery_date,
+      rt_before_surgery   = had_rt   & had_surgery & rt_date   < surgery_date,
+      rt_after_surgery    = had_rt   & had_surgery & rt_date   > surgery_date,
+      concurrent_chemo_rt = had_sact & had_curative_rt &
+        abs(as.integer(sact_date - rt_date)) <= 14,
+      
+      received_curative_tx = had_emresd | had_curative_surgery | had_curative_rt,
+      
+      # --- tx_pathway, from the flags only ---------------------------------
+      tx_pathway = case_when(
+        had_emresd & !had_surgery & !had_sact & !concurrent_chemo_rt ~ "EMR/ESD only",
+        had_emresd & had_surgery                                     ~ "EMR/ESD then surgery",
+        had_surgery & sact_before_surgery & rt_before_surgery        ~ "Surgery + neoadjuvant chemoRT",
+        had_surgery & sact_before_surgery & !rt_before_surgery       ~ "Surgery + neoadjuvant chemo",
+        had_surgery & rt_before_surgery & !sact_before_surgery       ~ "Surgery + neoadjuvant RT",
+        had_surgery & sact_after_surgery & !sact_before_surgery      ~ "Surgery + adjuvant chemo",
+        had_surgery & !had_sact & !concurrent_chemo_rt               ~ "Surgery only",
+        had_surgery                                                  ~ "Surgery + other",
+        !had_surgery & had_curative_rt & had_chemo_for_chemort       ~ "Definitive chemoRT",
+        !had_surgery & had_curative_rt & !had_chemo_for_chemort      ~ "Curative RT only",
+        !had_surgery & had_palliative_rt & had_sact                  ~ "Palliative chemo + RT",
+        !had_surgery & had_sact & !had_curative_rt                   ~ "SACT only",
+        !had_surgery & had_palliative_rt & !had_sact                 ~ "Palliative RT only",
+        TRUE                                                         ~ "No treatment recorded"
+      ),
+      
+      # --- first_tx_date: the clock-stop date for the pathway --------------
+      first_tx_date = case_when(
+        tx_pathway %in% c("EMR/ESD only", "EMR/ESD then surgery") ~ emresd_date,
+        tx_pathway == "Surgery + neoadjuvant chemoRT" ~ pmin(sact_date, rt_date, na.rm = TRUE),
+        tx_pathway == "Surgery + neoadjuvant RT"      ~ rt_date,
+        tx_pathway == "Surgery + neoadjuvant chemo"   ~ sact_date,
+        tx_pathway %in% c("Surgery + adjuvant chemo",
+                          "Surgery only", "Surgery + other") ~ surgery_date,
+        tx_pathway == "Definitive chemoRT" ~ pmin(sact_date, rt_date, na.rm = TRUE),
+        tx_pathway == "Curative RT only"   ~ rt_date,
+        TRUE                               ~ as.Date(NA)
+      ),
+      
+      # --- tx_trust: provider of the clock-stop treatment ------------------
+      # surgical/EMR pathways take the trust from the HES surgery provider; the
+      # RT-anchored pathways take it from the RT provider. SACT's own provider is
+      # never the trust source - even neoadjuvant chemo takes surgery's, because
+      # the curative act is the surgery.
+      tx_trust = case_when(
+        tx_pathway %in% c("EMR/ESD only", "EMR/ESD then surgery",
+                          "Surgery + neoadjuvant chemo",
+                          "Surgery + adjuvant chemo",
+                          "Surgery only", "Surgery + other") ~ substr(surgery_provider, 1, 3),
+        tx_pathway %in% c("Surgery + neoadjuvant chemoRT",
+                          "Surgery + neoadjuvant RT",
+                          "Definitive chemoRT",
+                          "Curative RT only")                ~ substr(rt_provider, 1, 3),
+        TRUE                                                 ~ NA_character_
+      )
+    )
+}
+
+# the raw cohort contract: what og_derive_pathway() consumes
+og_raw_cols <- c(
+  "pseudo_patientid", "diagmdy", "ydiag",
+  "sex", "agediag", "ethnicity_group_broad",
+  "NHSE_reversed_imd_quintile_lsoas",
+  "tumour_site_grp", "cancer_subtype", "stage_clean",
+  "route_combined", "cci_group",
+  "diag_trust", "diag_hosp",
+  "endoscopy_date", "emresd_date", "surgery_date", "sact_date", "rt_date",
+  "curative_surgery", "rt_curative", "chemo_source", "hes_chemo_date",
+  "surgery_provider", "rt_provider", "sact_provider",
+  "finmdy", "died"
+)
+
+# -----------------------------------------------------------------------------
+# Stage 2: og_cwt_merge(A, cwt, const)
+#   A    : Table A - the derived cohort from og_derive_pathway() (or any cohort
+#          carrying tx_pathway + first_tx_date + the treatment/anchor dates)
 #   cwt  : raw CWT records (Table B), character dd/mm/yyyy dates
 #   const: merge constants (defaults to og_merge_const)
 # Returns A with cwt_dtt_date, cwt_mdt_date, cwt_treat_date, cwt_modality, the
-# wt_*_dtt intervals, dtt_valid, and the audit categories attached.
+# waiting-time family, dtt_valid, and the audit categories attached.
 # -----------------------------------------------------------------------------
 og_cwt_merge <- function(A, cwt, const = og_merge_const) {
   
@@ -260,7 +384,35 @@ condense_icon_to_minimal <- function(full) {
   out %>% select(any_of(og_minimal_cols))
 }
 
-cat("Loaded og_cwt_merge(), condense_icon_to_minimal(), and the OG merge",
-    "constants/lookups.\n",
-    "Minimal Table A needs:", length(og_minimal_cols), "columns;",
-    "the merge itself uses diagmdy, endoscopy_date, first_tx_date, tx_pathway.\n")
+# -----------------------------------------------------------------------------
+# condense_icon_to_raw(full)
+#   Reduce the full ICON og_cohort to the RAW derivation input - the treatment
+#   dates, curative descriptors, chemo provenance and provider codes - so
+#   og_derive_pathway() can be re-run on the real data and checked against the
+#   pipeline's own tx_pathway. Renames the real provider fields (PROCODE3,
+#   ORGCODEPROVIDER, ORGANISATION_CODE_OF_PROVIDER) to the raw-contract names.
+# -----------------------------------------------------------------------------
+condense_icon_to_raw <- function(full) {
+  out <- full
+  if (!"cci_group" %in% names(out) && "rcs_ch_score" %in% names(out)) {
+    out <- out %>% mutate(cci_group = cut(
+      rcs_ch_score, breaks = c(-Inf, 0, 1, 2, Inf),
+      labels = c("0", "1", "2", "3+"), right = TRUE) %>% as.character())
+  }
+  if (!"tumour_site_grp" %in% names(out) && "cancer_subtype" %in% names(out)) {
+    out <- out %>% mutate(tumour_site_grp = if_else(
+      grepl("^Gast", coalesce(cancer_subtype, "")), "gastric", "oesophageal"))
+  }
+  rename_if_present <- function(d, new, old)
+    if (old %in% names(d) && !new %in% names(d)) rename(d, !!new := !!sym(old)) else d
+  out <- out %>%
+    rename_if_present("surgery_provider", "PROCODE3") %>%
+    rename_if_present("rt_provider",      "ORGCODEPROVIDER") %>%
+    rename_if_present("sact_provider",    "ORGANISATION_CODE_OF_PROVIDER")
+  out %>% select(any_of(og_raw_cols))
+}
+
+cat("Loaded og_derive_pathway() [stage 1], og_cwt_merge() [stage 2],",
+    "condense_icon_to_raw()/condense_icon_to_minimal(), and the OG constants.\n",
+    "Raw cohort needs", length(og_raw_cols), "columns; derivation builds",
+    "tx_pathway, first_tx_date and tx_trust from the flags and dates alone.\n")

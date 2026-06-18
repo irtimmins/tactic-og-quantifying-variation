@@ -26,7 +26,8 @@ version 14
 *  ---------------------------------------------------------------------------
 *  Paths and merge constants (kept together so the rules are easy to audit)
 *  ---------------------------------------------------------------------------
-local base    "Data/synthetic"
+local base "D:/Projects/#2045_ICON_TACTIC/Project4_OG_variation_deviants/tactic-og-quantifying-variation/Data/synthetic"
+
 local reg_dta "`base'/og_ncras_treatment_synthetic.dta"
 local cwt_dta "`base'/og_cwt_records_synthetic.dta"
 local out_dta "`base'/og_cohort_synthetic_stata.dta"

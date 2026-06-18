@@ -3,5 +3,6 @@
 .RData
 .Ruserdata
 Data/*
+Stata/*.stswp
 
 
