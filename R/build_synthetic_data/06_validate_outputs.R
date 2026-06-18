@@ -1,23 +1,29 @@
 # =============================================================================
-# OG cancer - validate the synthetic dataset (two-stage: derive then merge)
+# 06  Validate the outputs
 # -----------------------------------------------------------------------------
 # Print-only checks that the synthetic data (a) conforms to the raw and derived
 # contracts, (b) is internally consistent - the pathway and trust re-derive from
 # the raw flags/dates, the audit categories follow tx_pathway, dates are ordered
-# - and (c) reproduces the real cohort's pathway mix and audit targets. Run
-# after 03_og_generate.R.
+# - and (c) reproduces the real cohort's pathway mix and audit targets. Run last,
+# after 03 (generate), 04 (derive) and 05 (merge).
+#
+# Reads: the raw, derived and merged cohorts + the CWT records from Data/synthetic
 # =============================================================================
 
 library(tidyverse)
-source("R/build_synthetic_data/01_og_minimal_merge.R")   # og_derive_pathway, og_cwt_merge, contracts
 
-base_dir <- "Data/synthetic/"
-raw <- readRDS(paste0(base_dir, "og_ncras_treatment_synthetic.rds"))  # raw inputs
-der <- readRDS(paste0(base_dir, "og_derived_synthetic.rds"))          # after stage 1
-coh <- readRDS(paste0(base_dir, "og_cohort_synthetic.rds"))           # after stage 2
-cwt <- readRDS(paste0(base_dir, "og_cwt_records_synthetic.rds"))
-profile <- if (file.exists(paste0(base_dir, "og_profile_for_synthetic.rds")))
-  readRDS(paste0(base_dir, "og_profile_for_synthetic.rds")) else NULL
+# paths, relative to the project root (the .Rproj working directory)
+dir_fns <- "R/build_synthetic_data"
+dir_syn <- "Data/synthetic"
+
+source(file.path(dir_fns, "01_define_functions.R"))   # og_derive_pathway, contracts
+
+raw <- readRDS(file.path(dir_syn, "og_ncras_treatment_synthetic.rds"))  # raw (03)
+der <- readRDS(file.path(dir_syn, "og_derived_synthetic.rds"))          # derived (04)
+coh <- readRDS(file.path(dir_syn, "og_cohort_synthetic.rds"))           # merged (05)
+cwt <- readRDS(file.path(dir_syn, "og_cwt_records_synthetic.rds"))
+profile <- if (file.exists(file.path(dir_syn, "og_profile_for_synthetic.rds")))
+  readRDS(file.path(dir_syn, "og_profile_for_synthetic.rds")) else NULL
 
 sec <- function(x) cat("\n== ", x, " ==\n")
 
@@ -48,10 +54,10 @@ cat("re-derived tx_pathway matches saved:",
     round(100 * mean(re$tx_pathway == der$tx_pathway), 2), "%\n")
 cat("re-derived first_tx_date matches saved:",
     round(100 * mean(re$first_tx_date == der$first_tx_date |
-                     (is.na(re$first_tx_date) & is.na(der$first_tx_date))), 2), "%\n")
+                       (is.na(re$first_tx_date) & is.na(der$first_tx_date))), 2), "%\n")
 cat("re-derived tx_trust matches saved:",
     round(100 * mean(re$tx_trust == der$tx_trust |
-                     (is.na(re$tx_trust) & is.na(der$tx_trust))), 2), "%\n")
+                       (is.na(re$tx_trust) & is.na(der$tx_trust))), 2), "%\n")
 
 # tx_trust comes from the right provider: surgical pathways from surgery,
 # RT-anchored from RT, NA for non-curative
@@ -85,8 +91,8 @@ sec("3. Internal consistency")
 noncurative <- c("Palliative chemo + RT","SACT only","Palliative RT only",
                  "No treatment recorded")
 ftx_na_ok <- all(is.na(der$first_tx_date[der$tx_pathway %in% noncurative])) &&
-             all(!is.na(der$first_tx_date[!der$tx_pathway %in% noncurative &
-                                          der$tx_pathway != "Surgery + other"]))
+  all(!is.na(der$first_tx_date[!der$tx_pathway %in% noncurative &
+                                 der$tx_pathway != "Surgery + other"]))
 cat("first_tx_date NA pattern matches pathway intent:", ftx_na_ok, "\n")
 
 # date ordering: first_tx >= diagnosis, no negative dx -> dtt

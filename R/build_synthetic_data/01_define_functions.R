@@ -1,27 +1,26 @@
 # =============================================================================
-# OG cancer - pathway derivation + CWT merge (shared engine)
+# 01  Define the pipeline functions
 # -----------------------------------------------------------------------------
-# The two transparent coding stages the full pipeline performs, written once and
-# shared between synthetic data and the real condensed cohort:
+# This script defines the two functions the pipeline is built from, plus their
+# shared constants and lookups. It is sourced by the later scripts (04 derive,
+# 05 merge, 06 validate); it does not read or write any data and is not run on
+# its own.
 #
-#   Stage 1  og_derive_pathway()  takes a RAW cohort - treatment dates, curative
-#            descriptors, chemo provenance, and per-modality provider codes - and
-#            derives the treatment flags, the sequencing flags, tx_pathway,
-#            first_tx_date, and tx_trust. The pathway is a function of the flags
-#            and dates alone; nothing is pre-supplied.
+#   og_derive_pathway()  step 1 of the pipeline. Takes a RAW cohort - treatment
+#                        dates, curative descriptors, chemo provenance, and the
+#                        per-modality provider codes - and derives the treatment
+#                        flags, the sequencing flags, tx_pathway, first_tx_date,
+#                        and tx_trust. The pathway is a function of the flags and
+#                        dates alone; nothing is pre-supplied.
 #
-#   Stage 2  og_cwt_merge()  takes the derived cohort (Table A) plus the raw CWT
-#            records (Table B) and attaches the decision-to-treat (DTT) node,
-#            the waiting-time family, dtt_valid, and the audit categories.
+#   og_cwt_merge()       step 2 of the pipeline. Takes the derived cohort plus
+#                        the raw CWT records and attaches the decision-to-treat
+#                        (DTT) node, the waiting-time family, dtt_valid, and the
+#                        audit categories.
 #
-# Table B holds one row per recorded CWT treatment event, dates as "dd/mm/yyyy"
-# character exactly as the partitioned dataset stores them.
-#
-# Splitting the work this way means every coding stage is inspectable: the raw
-# cohort shows the inputs, og_derive_pathway() shows how the pathway and trust
-# are built from them, and og_cwt_merge() shows the linkage. The same two
-# functions run on synthetic data and on the real cohort condensed to the raw
-# column set (see condense_icon_to_minimal / condense_icon_to_raw below).
+# The same two functions run on the synthetic data (scripts 03-05) and on the
+# real cohort once condensed to the raw column set (condense_icon_to_raw()), so
+# the derivation and merge logic is written once and shared.
 # =============================================================================
 
 library(tidyverse)
@@ -412,7 +411,7 @@ condense_icon_to_raw <- function(full) {
   out %>% select(any_of(og_raw_cols))
 }
 
-cat("Loaded og_derive_pathway() [stage 1], og_cwt_merge() [stage 2],",
+cat("01 defined: og_derive_pathway() [step 1], og_cwt_merge() [step 2],",
     "condense_icon_to_raw()/condense_icon_to_minimal(), and the OG constants.\n",
     "Raw cohort needs", length(og_raw_cols), "columns; derivation builds",
     "tx_pathway, first_tx_date and tx_trust from the flags and dates alone.\n")

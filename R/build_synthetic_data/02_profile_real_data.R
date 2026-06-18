@@ -1,37 +1,40 @@
 # =============================================================================
-# OG cancer - profiling for minimal synthetic data
+# 02  Profile the real data  (optional; secure server only)
 # -----------------------------------------------------------------------------
-# Runs on the secure server against the real post-merge cohort. Extracts the
-# aggregate, disclosure-controlled distributions the generator needs to build a
-# synthetic registry+treatment cohort (Table A) and a synthetic CWT records
-# table (Table B) that reproduce the OG audit pathways and the CWT merge.
+# Runs against the real post-merge cohort and extracts the aggregate,
+# disclosure-controlled distributions the generator (script 03) uses to make the
+# synthetic data resemble the real cohort. This is the only script that touches
+# real data. It is optional: if you skip it, script 03 falls back to built-in
+# defaults.
 #
 # Pathway-aware by design: OG treatment is multi-modality, so the profile is
-# keyed on tx_pathway (and stage x subtype), not a single surgery date. That is
+# keyed on tx_pathway (and stage x subtype), not a single surgery date - that is
 # what lets the generator reproduce the audit categorisation realistically.
 #
 # Disclosure control: counts rounded to nearest 5, cells < 10 suppressed,
 # intervals reported as quantiles only. Output is aggregate; still send through
 # output checking before release.
 #
-# Produces: og_profile_for_synthetic.rds   (distributions)
-#           og_minimal_spec.rds            (column manifest + merge constants)
-# Input:    og_cohort_cwt_2015_2022.rds    (post-merge analysis cohort)
-#           the partitioned CWT dataset    (optional, for per-record stats)
+# Reads : Data/ICON/og_cohort_cwt_2015_2022.rds  (the real post-merge cohort)
+#         (on the secure server, point dir_real at the live extract instead)
+# Writes: Data/synthetic/og_profile_for_synthetic.rds   (distributions)
+#         Data/synthetic/og_minimal_spec.rds            (column manifest + const)
 # =============================================================================
 
 library(tidyverse)
 library(arrow)
 
-base_dir <- "E:/Data_PHE/Extracts/#2045_ICON_TACTIC/Derived/"
-save_dir <- "Data/synthetic/"
-cwt_path <- "E:/Data_PHE/Extracts/#2045_ICON_TACTIC/CWT/11_CWT_data_partitioned"
-dir.create(save_dir, recursive = TRUE, showWarnings = FALSE)
+# paths, relative to the project root (the .Rproj working directory)
+dir_real <- "Data/ICON"        # real cohort; on the server, the live extract dir
+dir_syn  <- "Data/synthetic"   # where the profile is written
+cwt_path <- file.path(dir_real, "cwt_partitioned")   # optional per-record stats
+dir.create(dir_syn, recursive = TRUE, showWarnings = FALSE)
+
 SDC_MIN  <- 10L
 og_icd   <- c("C150","C151","C152","C153","C154","C155","C158","C159","C15",
               "C160","C161","C162","C163","C164","C165","C166","C168","C169","C16")
 
-cohort <- readRDS(paste0(base_dir, "og_cohort_cwt_2015_2022.rds"))
+cohort <- readRDS(file.path(dir_real, "og_cohort_cwt_2015_2022.rds"))
 
 # -----------------------------------------------------------------------------
 # Disclosure-safe helpers
@@ -188,7 +191,7 @@ if (dir.exists(cwt_path)) {
     filter(site_icd10 %in% og_icd) %>% collect() %>%
     mutate(pseudo_patientid = as.character(pseudo_patientid)) %>%
     filter(pseudo_patientid %in% ids)
-
+  
   profile$cwt_records_per_patient <- cwt %>%
     count(pseudo_patientid, name = "k") %>% count(k, name = "n_pat") %>%
     mutate(n_safe = sup(n_pat), prop = round(n_pat / sum(n_pat), 4)) %>%
@@ -253,7 +256,7 @@ minimal_spec <- list(
     surg_switch_date = "2020-10-01", surg_01_rule = "date_split")
 )
 
-saveRDS(profile,      paste0(save_dir, "og_profile_for_synthetic.rds"))
-saveRDS(minimal_spec, paste0(save_dir, "og_minimal_spec.rds"))
+saveRDS(profile,      file.path(dir_syn, "og_profile_for_synthetic.rds"))
+saveRDS(minimal_spec, file.path(dir_syn, "og_minimal_spec.rds"))
 cat("Saved og_profile_for_synthetic.rds (", length(profile), "sections) and",
     "og_minimal_spec.rds\n")

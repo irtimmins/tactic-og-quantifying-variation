@@ -1,41 +1,54 @@
 # =============================================================================
-# OG cancer - generate minimal synthetic data (Table A, Table B, merged cohort)
+# 03  Generate the raw synthetic datasets
 # -----------------------------------------------------------------------------
-# Builds a synthetic OG cohort that reproduces the audit treatment pathways and
-# the CWT merge, off the disclosure-safe profile. Runs anywhere - no real data.
+# Generates the two raw synthetic inputs and stops - it does NOT derive the
+# pathway or merge (those are scripts 04 and 05). Runs anywhere; no real data.
 #
-#   Table A  synthetic registry + treatment cohort (one row per patient), with
-#            the treatment anchor dates, derived tx_pathway and first_tx_date.
-#            This is the LEFT side of the merge and is realistic on its own.
-#   Table B  synthetic raw CWT records, modality consistent with each patient's
-#            pathway, dates as dd/mm/yyyy character (the RIGHT side).
-#   merged   Table A passed through the shared og_cwt_merge() - identical engine
-#            to the one the real condensed cohort uses.
+#   raw cohort   the synthetic registry + treatment cohort: identity, patient and
+#                tumour descriptors, the treatment DATES, the curative descriptors
+#                (curative_surgery, rt_curative), chemo provenance, and the
+#                per-modality provider codes. No pathway - that is derived in 04.
+#   CWT records  the synthetic raw CWT records, one row per treatment event,
+#                dates as dd/mm/yyyy character.
 #
-# Source 01_og_minimal_merge.R first (provides og_cwt_merge + constants/lookups).
+# How it works: a latent "intended" pathway is drawn per patient (from the
+# profile, or built-in defaults) purely to place a realistic set of treatment
+# dates and to choose a consistent CWT modality. The latent label is then
+# dropped - script 04 re-derives the pathway from the dates alone. The latent
+# pathway is also saved on its own as a QC file so script 04 can confirm the
+# derivation recovers what was intended.
+#
+# Reads (optional): Data/synthetic/og_profile_for_synthetic.rds  (from 02)
+# Writes: Data/synthetic/og_ncras_treatment_synthetic.rds/.dta   (raw cohort)
+#         Data/synthetic/og_cwt_records_synthetic.rds/.dta        (CWT records)
+#         Data/synthetic/og_intended_pathway_qc.rds               (QC only)
 # =============================================================================
 
 library(tidyverse)
 library(haven)
 
-# the shared merge engine and OG lookups
-source("R/build_synthetic_data/01_og_minimal_merge.R")
+# paths, relative to the project root (the .Rproj working directory)
+dir_fns <- "R/build_synthetic_data"   # location of 01_define_functions.R
+dir_syn <- "Data/synthetic"           # synthetic inputs and outputs
+dir.create(dir_syn, recursive = TRUE, showWarnings = FALSE)
 
-base_dir <- "Data/synthetic/"
+# load the constants and lookups (tx_pathway_levels, og_raw_cols, og_merge_const)
+source(file.path(dir_fns, "01_define_functions.R"))
+
 set.seed(2045)
 N_TOTAL  <- 40000L
 
-prof_path <- paste0(base_dir, "og_profile_for_synthetic.rds")
-spec_path <- paste0(base_dir, "og_minimal_spec.rds")
+prof_path <- file.path(dir_syn, "og_profile_for_synthetic.rds")
+spec_path <- file.path(dir_syn, "og_minimal_spec.rds")
 profile <- if (file.exists(prof_path)) readRDS(prof_path) else NULL
 spec    <- if (file.exists(spec_path)) readRDS(spec_path) else NULL
-mc      <- og_merge_const   # from the sourced merge engine
+mc      <- og_merge_const   # from 01
 
 # -----------------------------------------------------------------------------
 # Helpers - sampling with profile-or-default fallback
 # -----------------------------------------------------------------------------
 def_marg <- function(levels, props) tibble(level = as.character(levels),
-                                            prop = props / sum(props))
+                                           prop = props / sum(props))
 sample_cat <- function(tbl, n) {
   p <- tbl$prop; p[is.na(p)] <- 0
   sample(tbl$level, n, replace = TRUE, prob = p / sum(p))
@@ -341,20 +354,12 @@ A$died   <- as.integer(runif(n) < pmin(0.95, 0.55 + 0.0002 * surv_days * (surv_m
 A$finmdy <- A$diagmdy + surv_days
 
 # =============================================================================
-# Stage 1 derivation: build tx_pathway, first_tx_date and tx_trust from the raw
-# treatment fields. The latent intended pathway is dropped here - everything
-# downstream uses the DERIVED pathway, exactly as the real pipeline does.
-# =============================================================================
-A_raw <- A %>% select(any_of(og_raw_cols))
-A_der <- og_derive_pathway(A_raw)
-
-# how often does the derived pathway match the latent intended one? (a check
-# that the generator's date placement and the derivation are consistent)
-cat("\nDerived vs latent pathway agreement:",
-    round(100 * mean(A_der$tx_pathway == A$tx_pathway_latent), 1), "%\n")
-
-# =============================================================================
-# Table B - synthetic raw CWT records, modality consistent with the pathway
+# CWT records (Table B) - built from the latent pathway and the raw dates
+# -----------------------------------------------------------------------------
+# No derivation is needed here: the latent intended pathway (a generation
+# parameter) chooses a consistent CWT modality, and the earliest actual
+# treatment date anchors the record. Script 05 will re-match modality to the
+# derived pathway during the merge.
 # =============================================================================
 cov     <- num_or(profile$cwt_coverage$pct_any_cwt, defaults$cwt_coverage)
 p_exact <- num_or(profile$cwt_agreement$pct_exact,  defaults$pct_exact)
@@ -364,72 +369,67 @@ recs    <- if (!is.null(profile$cwt_records_per_patient))
   profile$cwt_records_per_patient %>% transmute(level = records, prop) else
     defaults$records_per_patient
 
-# modality of the anchored CWT record, by pathway (profile or sensible default)
 mod_by_pathway <- profile$cwt_modality_by_pathway
 default_mod_for_pathway <- function(pw) {
   switch(pw,
-    "EMR/ESD only" = "23", "EMR/ESD then surgery" = "01",
-    "Surgery + neoadjuvant chemo" = "02",
-    "Surgery + neoadjuvant chemoRT" = "04",
-    "Surgery + neoadjuvant RT" = "05",
-    "Surgery + adjuvant chemo" = "01", "Surgery only" = "01",
-    "Surgery + other" = "01",
-    "Definitive chemoRT" = "04", "Curative RT only" = "05",
-    "Palliative chemo + RT" = "02", "SACT only" = "02",
-    "Palliative RT only" = "05", "No treatment recorded" = "07", "01")
+         "EMR/ESD only" = "23", "EMR/ESD then surgery" = "01",
+         "Surgery + neoadjuvant chemo" = "02",
+         "Surgery + neoadjuvant chemoRT" = "04",
+         "Surgery + neoadjuvant RT" = "05",
+         "Surgery + adjuvant chemo" = "01", "Surgery only" = "01",
+         "Surgery + other" = "01",
+         "Definitive chemoRT" = "04", "Curative RT only" = "05",
+         "Palliative chemo + RT" = "02", "SACT only" = "02",
+         "Palliative RT only" = "05", "No treatment recorded" = "07", "01")
 }
 draw_modality <- function(pw_vec) {
   out <- character(length(pw_vec))
   for (pw in unique(pw_vec)) {
-    idx <- which(pw_vec == pw)
+    ix <- which(pw_vec == pw)
     tbl <- if (!is.null(mod_by_pathway))
       mod_by_pathway %>% filter(tx_pathway == pw, !is.na(prop)) else NULL
     if (!is.null(tbl) && nrow(tbl) >= 1 && sum(tbl$prop) > 0)
-      out[idx] <- sample(tbl$cwt_modality, length(idx), TRUE, tbl$prop / sum(tbl$prop))
+      out[ix] <- sample(tbl$cwt_modality, length(ix), TRUE, tbl$prop / sum(tbl$prop))
     else
-      out[idx] <- default_mod_for_pathway(pw)
+      out[ix] <- default_mod_for_pathway(pw)
   }
   out
 }
 
-# which CWT clock-stop date does the anchor sit on? for curative pathways it is
-# first_tx_date; for palliative/none it is the earliest recorded treatment date.
-# All fields come from the DERIVED cohort.
-A_der$cwt_event_date <- A_der$first_tx_date
-i <- is.na(A_der$cwt_event_date)
-A_der$cwt_event_date[i] <- pmin(A_der$sact_date[i], A_der$rt_date[i],
-                                A_der$surgery_date[i], A_der$emresd_date[i],
-                                na.rm = TRUE)
+# the CWT event date is the earliest actual treatment the patient received,
+# computed straight from the raw dates (no derivation)
+cwt_event_date <- pmin(A$emresd_date, A$surgery_date, A$sact_date, A$rt_date,
+                       na.rm = TRUE)
 
-has_cwt <- runif(n) < cov & !is.na(A_der$cwt_event_date)
+has_cwt <- runif(n) < cov & !is.na(cwt_event_date)
 idx     <- which(has_cwt)
 m       <- length(idx)
 
-# DTT precedes the treatment date by the dx->dtt vs dx->tx gap; approximate by
-# placing DTT a short interval before the event date
-dtt_lead <- rgamma_ms(m, 14, 10)
-dtt_anchor <- A_der$cwt_event_date[idx] - dtt_lead
+# DTT precedes the treatment date by a short interval
+dtt_lead   <- rgamma_ms(m, 14, 10)
+dtt_anchor <- cwt_event_date[idx] - dtt_lead
 
-# agreement offset between cwt_treat_date and first_tx_date
+# offset between cwt_treat_date and the event date, reproducing the linkage
+# agreement seen in the real data (exact / within-14 / further out)
 u <- runif(m); delta <- integer(m)
 mid <- u >= p_exact & u < p_w14; far <- u >= p_w14
 delta[mid] <- sample(c(-14:-1, 1:14), sum(mid), TRUE)
 delta[far] <- sample(c(-60:-15, 15:60), sum(far), TRUE)
-treat_anchor <- A_der$cwt_event_date[idx] + delta
+treat_anchor <- cwt_event_date[idx] + delta
 
-mdt_have <- runif(m) < p_mdt
+mdt_have   <- runif(m) < p_mdt
 mdt_anchor <- as.Date(rep(NA, m), origin = "1970-01-01")
 mdt_anchor[mdt_have] <- dtt_anchor[mdt_have] - sample(0:21, sum(mdt_have), TRUE)
 
 crtp  <- dtt_anchor - sample(20:60, m, TRUE)
 fseen <- crtp + sample(0:14, m, TRUE)
-site  <- ifelse(A_der$tumour_site_grp[idx] == "gastric",
+site  <- ifelse(A$tumour_site_grp[idx] == "gastric",
                 sample(c("C160","C161","C162","C163","C164","C165","C166","C169"), m, TRUE),
                 sample(c("C150","C151","C152","C153","C154","C155","C159"), m, TRUE))
-modal <- draw_modality(A_der$tx_pathway[idx])
+modal <- draw_modality(A$tx_pathway_latent[idx])
 
 anchor <- tibble(
-  pseudo_patientid   = A_der$pseudo_patientid[idx],
+  pseudo_patientid   = A$pseudo_patientid[idx],
   site_icd10         = site,
   modality           = modal,
   crtp_date          = fmt(crtp),
@@ -439,15 +439,15 @@ anchor <- tibble(
   treat_start        = fmt(treat_anchor)
 )
 
-# extra non-anchor records for a minority (subsequent treatments / noise),
-# placed later so the merge's in-window + pathway-consistency picks the anchor
+# a minority get extra, later (non-anchor) records - subsequent treatments and
+# noise the merge's in-window + pathway-consistency rules should screen out
 k <- as.integer(sample_cat(recs, m))
 extra_idx <- which(k > 1)
 extra <- map_dfr(extra_idx, function(j) {
   mm <- k[j] - 1L
-  base_dtt <- A_der$cwt_event_date[idx[j]] + cumsum(sample(30:120, mm, TRUE))
+  base_dtt <- cwt_event_date[idx[j]] + cumsum(sample(30:120, mm, TRUE))
   tibble(
-    pseudo_patientid   = A_der$pseudo_patientid[idx[j]],
+    pseudo_patientid   = A$pseudo_patientid[idx[j]],
     site_icd10         = anchor$site_icd10[j],
     modality           = sample(c("02","05","07","08","09"), mm, TRUE),
     crtp_date          = fmt(base_dtt - sample(20:60, mm, TRUE)),
@@ -459,49 +459,27 @@ extra <- map_dfr(extra_idx, function(j) {
 syn_cwt <- bind_rows(anchor, extra) %>% arrange(pseudo_patientid)
 
 # =============================================================================
-# Stage 2: run the shared merge on the derived cohort, then report
+# Save the two raw inputs (+ the intended-pathway QC file)
 # =============================================================================
-syn_cohort <- og_cwt_merge(A_der, syn_cwt)
+A_raw <- A %>% select(any_of(og_raw_cols))
+qc_intended <- A %>% transmute(pseudo_patientid,
+                               tx_pathway_intended = tx_pathway_latent)
 
-cat("\nSynthetic pathway mix (derived):\n")
-A_der %>% count(tx_pathway) %>% mutate(pct = round(100*n/sum(n),1)) %>%
-  arrange(desc(n)) %>% print(n = 20)
+cat("\nIntended (latent) pathway mix:\n")
+qc_intended %>% count(tx_pathway_intended) %>%
+  mutate(pct = round(100*n/sum(n),1)) %>% arrange(desc(n)) %>% print(n = 20)
+cat("\nRaw cohort:", nrow(A_raw), "patients,", ncol(A_raw), "columns",
+    "| CWT records:", nrow(syn_cwt), "\n")
 
-cat("\nAudit Table 4 (synthetic, stage 1-3):\n")
-syn_cohort %>%
-  filter(stage_clean %in% c("1","2","3")) %>%
-  summarise(pct_curative  = round(100*mean(received_curative_tx_audit, na.rm = TRUE)),
-            pct_any_tx     = round(100*mean(received_any_tx, na.rm = TRUE))) %>%
-  print()
-if (!is.null(profile$audit_targets))
-  cat("  (real targets: curative",
-      round(100*profile$audit_targets$pct_curative), "any",
-      round(100*profile$audit_targets$pct_any_tx), ")\n")
-
-cat("\nCWT coverage among synthetic cohort:",
-    round(100*mean(!is.na(syn_cohort$cwt_dtt_date)),1), "%\n")
-cat("dtt_valid TRUE share (non-EMR pathways):",
-    round(100*mean(syn_cohort$dtt_valid, na.rm = TRUE),1), "%\n")
-
-# =============================================================================
-# Save the three cohort stages + the CWT records
-#   _raw     the raw registry+treatment inputs (dates, descriptors, providers)
-#   _derived the cohort after og_derive_pathway() (flags, tx_pathway, tx_trust)
-#   _cohort  the merged analysis cohort after og_cwt_merge()
-# =============================================================================
-saveRDS(A_raw,      paste0(base_dir, "og_ncras_treatment_synthetic.rds"))
-saveRDS(A_der,      paste0(base_dir, "og_derived_synthetic.rds"))
-saveRDS(syn_cwt,    paste0(base_dir, "og_cwt_records_synthetic.rds"))
-saveRDS(syn_cohort, paste0(base_dir, "og_cohort_synthetic.rds"))
+saveRDS(A_raw,       file.path(dir_syn, "og_ncras_treatment_synthetic.rds"))
+saveRDS(syn_cwt,     file.path(dir_syn, "og_cwt_records_synthetic.rds"))
+saveRDS(qc_intended, file.path(dir_syn, "og_intended_pathway_qc.rds"))
 
 to_stata <- function(df) df %>%
   mutate(across(where(is.factor), as.character),
          across(where(is.logical), as.integer))
-write_dta(to_stata(A_raw),      paste0(base_dir, "og_ncras_treatment_synthetic.dta"))
-write_dta(to_stata(A_der),      paste0(base_dir, "og_derived_synthetic.dta"))
-write_dta(to_stata(syn_cwt),    paste0(base_dir, "og_cwt_records_synthetic.dta"))
-write_dta(to_stata(syn_cohort), paste0(base_dir, "og_cohort_synthetic.dta"))
+write_dta(to_stata(A_raw),   file.path(dir_syn, "og_ncras_treatment_synthetic.dta"))
+write_dta(to_stata(syn_cwt), file.path(dir_syn, "og_cwt_records_synthetic.dta"))
 
-cat("\nSaved raw Table A (", nrow(A_raw), "rows), derived cohort (",
-    nrow(A_der), "rows), Table B CWT (", nrow(syn_cwt),
-    "rows), merged cohort (", nrow(syn_cohort), "rows).\n")
+cat("Saved raw cohort + CWT records (and the intended-pathway QC file).\n",
+    "Next: 04_derive_pathway.R\n")
