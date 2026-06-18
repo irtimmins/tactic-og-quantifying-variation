@@ -1,5 +1,5 @@
 # =============================================================================
-# 10  Check HES OP  (optional, print-only)
+# 12  Check HES OP  (optional, print-only)
 # -----------------------------------------------------------------------------
 # An exploratory check, not part of the build: it does not derive or save
 # anything. It confirms the HES outpatient endoscopy supplement behaves as

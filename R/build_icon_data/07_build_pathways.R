@@ -72,7 +72,7 @@ og_cohort <- og_cohort %>%
     had_rt               = !is.na(rt_date),
     had_curative_rt      = !is.na(rt_date) & rt_curative == TRUE,
     had_palliative_rt    = !is.na(rt_date) & rt_curative == FALSE,
-
+    
     # chemo eligible to define non-surgical definitive chemoRT: SACT chemo always
     # counts; HES-only chemo only when within hes_chemo_near_rt_days of the RT, so
     # a separate HES chemo episode cannot manufacture definitive chemoRT.
@@ -80,7 +80,7 @@ og_cohort <- og_cohort %>%
       ( coalesce(chemo_source, "sact") != "hes" |
           ( !is.na(hes_chemo_date) & !is.na(rt_date) &
               abs(as.integer(hes_chemo_date - rt_date)) <= hes_chemo_near_rt_days ) ),
-
+    
     # sequencing flags
     sact_before_surgery = had_sact & had_surgery & sact_date < surgery_date,
     sact_after_surgery  = had_sact & had_surgery & sact_date > surgery_date,
@@ -88,9 +88,9 @@ og_cohort <- og_cohort %>%
     rt_after_surgery    = had_rt   & had_surgery & rt_date   > surgery_date,
     concurrent_chemo_rt = had_sact & had_curative_rt &
       abs(as.integer(sact_date - rt_date)) <= chemo_rt_concurrent_days,
-
+    
     received_curative_tx = had_emresd | had_curative_surgery | had_curative_rt,
-
+    
     # pathway classification (first matching branch wins)
     tx_pathway = case_when(
       had_emresd & !had_surgery & !had_sact & !concurrent_chemo_rt ~ "EMR/ESD only",
@@ -107,7 +107,7 @@ og_cohort <- og_cohort %>%
       !had_surgery & had_sact & !had_curative_rt                   ~ "SACT only",
       !had_surgery & had_palliative_rt & !had_sact                 ~ "Palliative RT only",
       TRUE                                                         ~ "No treatment recorded"),
-
+    
     # first curative-treatment date (the clock-stop). Neoadjuvant RT/chemoRT sets
     # the date; neoadjuvant chemo alone does not (surgery sets it).
     first_tx_date = case_when(
@@ -120,7 +120,7 @@ og_cohort <- og_cohort %>%
       tx_pathway == "Definitive chemoRT" ~ pmin(sact_date, rt_date, na.rm = TRUE),
       tx_pathway == "Curative RT only"   ~ rt_date,
       TRUE                               ~ as.Date(NA)),
-
+    
     # treating trust = provider of the clock-stop treatment
     tx_trust = case_when(
       tx_pathway %in% c("EMR/ESD only", "EMR/ESD then surgery",
@@ -129,7 +129,7 @@ og_cohort <- og_cohort %>%
       tx_pathway %in% c("Surgery + neoadjuvant chemoRT", "Surgery + neoadjuvant RT",
                         "Definitive chemoRT", "Curative RT only") ~ substr(ORGCODEPROVIDER, 1, 3),
       TRUE                                                 ~ NA_character_),
-
+    
     # waiting-time components (the CWT-anchored family is added in 08)
     wt_dx_to_tx     = as.integer(first_tx_date - diagmdy),
     wt_endo_to_tx   = as.integer(first_tx_date - endoscopy_date),
@@ -142,7 +142,7 @@ og_cohort <- og_cohort %>%
     wt_dx_to_rt     = as.integer(rt_date - diagmdy),
     wt_endo_to_rt   = as.integer(rt_date - endoscopy_date),
     wt_rt_to_surg   = as.integer(surgery_date - rt_date),
-
+    
     # survival from surgery (PI7/PI8)
     surv_from_surg_days = as.integer(finmdy - surgery_date),
     alive_90d_post_surg = had_surgery & !is.na(surv_from_surg_days) &

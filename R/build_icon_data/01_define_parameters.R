@@ -36,11 +36,10 @@ path_ncras_parquet <- file.path(dir_raw,
                                 "Extracts/#2045_ICON_TACTIC/NCRAS/NCRAS_clean_1995_2022_route_sitestr")
 path_cosd_dta      <- file.path(dir_raw,
                                 "Raw data files received from PHE READ ONLY/NCRAS/Stata files/18_COSD_data.dta")
-path_hes_apc_dir   <- file.path(dir_raw, "Extracts/#2045_ICON_TACTIC/HES/APC")
-path_hes_op_dir    <- file.path(dir_raw,
-                                "Raw data files received from PHE READ ONLY/HES/OP")
-path_sact_dir      <- file.path(dir_raw, "Extracts/#2045_ICON_TACTIC/SACT")
-path_rtds_dir      <- file.path(dir_raw, "Extracts/#2045_ICON_TACTIC/RTDS")
+path_hes_apc_dir   <- file.path(dir_raw, "Extracts/#2045_ICON_TACTIC/HES/APC_parquet")
+path_hes_op_dir    <- file.path(dir_raw, "Extracts/#2045_ICON_TACTIC/HES/OP_parquet")
+path_sact_dir      <- file.path(dir_raw, "Raw data files received from PHE READ ONLY/SACT")
+path_rtds_dir      <- file.path(dir_raw, "Raw data files received from PHE READ ONLY/RTDS")
 if (!exists("path_cwt_partition"))
   path_cwt_partition <- file.path(dir_raw,
                                   "Extracts/#2045_ICON_TACTIC/CWT/11_CWT_data_partitioned")
@@ -225,22 +224,37 @@ admimeth_emerg <- c("21","22","23","24","25","28","2A","2B","2C","2D")
 # normalise an OPCS code for matching (upper case, dots removed)
 normalise_opcs <- function(x) str_replace_all(str_to_upper(as.character(x)), "\\.", "")
 
-# guard a saved extract against staleness: the file-existence gate in 03 reuses
-# whatever is on disk, so an extract written before a change to 03 may lack a
-# derived column. This stops with a clear, actionable message naming the missing
-# columns rather than letting a downstream step fail with "object not found".
-check_extract <- function(df, needed, label, extract_path) {
+# guard a saved extract against staleness or a fixture leak: the file-existence
+# gate in 03 reuses whatever is on disk, so an extract written before a change to
+# 03 may lack a column, and a validation run on fixtures could in principle leave
+# a tiny file in place of the real one. This stops with a clear, actionable
+# message rather than letting a downstream step match nothing or fail obscurely.
+check_extract <- function(df, needed, label, extract_path, min_rows = 1000L) {
   miss <- setdiff(needed, names(df))
   if (length(miss))
     stop(label, " extract is missing columns: ", paste(miss, collapse = ", "),
          "\n  - it is stale. Delete ", basename(extract_path),
          " and re-run 03_extract_raw_sources.R (or set refresh_raw <- TRUE).",
          call. = FALSE)
+  if (nrow(df) < min_rows)
+    stop(label, " extract has only ", nrow(df), " rows (expected >= ", min_rows,
+         ").\n  - this looks like a fixture or a truncated read, not the real",
+         " extract. Delete ", basename(extract_path),
+         " and re-run 03_extract_raw_sources.R with refresh_raw <- TRUE.",
+         call. = FALSE)
 }
 
 # pivot HES OPERTN_/OPDATE_ fields long and keep episodes whose OPCS is in a list.
 # Used by the endoscopy, EMR/ESD and surgery anchors so the pivot lives once.
 match_opcs_episodes <- function(hes_data, opcs_list, op_cols, opdate_cols) {
+  # an empty result must still carry the columns the anchors select, so a
+  # modality that simply did not occur does not break the downstream joins
+  empty <- tibble(pseudo_patientid = character(), EPISTART = as.Date(character()),
+                  EPIORDER = integer(), EPITYPE = character(),
+                  ADMIDATE = as.Date(character()), ADMIMETH = character(),
+                  PROCODE3 = character(), SITETRET = character(),
+                  opcs4 = character(), op_position_n = integer(),
+                  op_date = as.Date(character()))
   ops_long <- hes_data %>%
     filter(!is.na(OPERTN_01), OPERTN_01 != "-") %>%
     pivot_longer(all_of(op_cols), names_to = "op_position", values_to = "opcs_code") %>%
@@ -248,7 +262,7 @@ match_opcs_episodes <- function(hes_data, opcs_list, op_cols, opdate_cols) {
     mutate(opcs4 = normalise_opcs(opcs_code),
            op_position_n = as.integer(str_extract(op_position, "[0-9]+"))) %>%
     filter(opcs4 %in% opcs_list)
-  if (nrow(ops_long) == 0) return(tibble())
+  if (nrow(ops_long) == 0) return(empty)
   dates_long <- hes_data %>%
     pivot_longer(all_of(opdate_cols), names_to = "opdate_position", values_to = "op_date") %>%
     mutate(op_position_n = as.integer(str_extract(opdate_position, "[0-9]+")),

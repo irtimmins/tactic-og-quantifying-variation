@@ -70,7 +70,7 @@ ncras_og_ids <- unique(as.character(og_cohort$pseudo_patientid))
 # the partitioned dataset.
 if (!exists("read_cwt"))
   read_cwt <- function() open_dataset(path_cwt_partition) %>%
-    filter(site_icd10 %in% og_icd10) %>% collect()
+  filter(site_icd10 %in% og_icd10) %>% collect()
 
 cwt_og <- read_cwt() %>%
   mutate(pseudo_patientid  = as.character(pseudo_patientid),
@@ -168,14 +168,14 @@ og_cohort <- og_cohort %>%
       "Surgery only", "Surgery plus SACT/RT", "EMR/ESD",
       "Definitive chemoRT", "Curative RT only",
       "Chemo/RT only (non-curative)", "No treatment recorded")),
-
+    
     tx_intent_audit = case_when(
       tx_modality_audit %in% c("Surgery only", "Surgery plus SACT/RT", "EMR/ESD",
                                "Definitive chemoRT", "Curative RT only") ~ "Curative",
       tx_modality_audit == "Chemo/RT only (non-curative)"               ~ "Non-curative",
       tx_modality_audit == "No treatment recorded"                      ~ "No treatment",
       TRUE                                                              ~ NA_character_),
-
+    
     # received any treatment within nine months. Counts the CWT treatment date as
     # well as first_tx_date, since first_tx_date is NA for palliative patients who
     # nonetheless received an in-window treatment.

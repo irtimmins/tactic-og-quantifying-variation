@@ -34,23 +34,22 @@ why_reading <- function(label, extract) {
 # -----------------------------------------------------------------------------
 if (refresh_raw || !file.exists(f_hes_apc_extract)) {
   why_reading("HES APC", f_hes_apc_extract)
-  hes_apc_files <- list.files(path_hes_apc_dir, pattern = "FILE*", full.names = TRUE) %>%
-    keep(~{
-      yr <- str_extract(.x, "(?<=HES_APC_)\\d{4}") %>% as.integer()
-      !is.na(yr) && yr %in% 2014:2024
-    })
-  stopifnot(length(hes_apc_files) > 0)
   hes_cols_select <- c("STUDY_ID","ADMIDATE","ADMIMETH","PROCODE3","SITETRET",
                        "EPISTART","EPIORDER","EPITYPE", op_cols, opdate_cols, diag_cols)
-  hes_apc <- map_dfr(hes_apc_files, ~{
-    read_parquet(.x, col_select = all_of(hes_cols_select)) %>%
-      filter(STUDY_ID %in% ncras_og_ids) %>%
-      mutate(STUDY_ID = as.character(STUDY_ID), ADMIMETH = as.character(ADMIMETH),
-             EPISTART = as.Date(EPISTART), ADMIDATE = as.Date(ADMIDATE),
-             across(all_of(op_cols), as.character),
-             across(all_of(opdate_cols), as.Date),
-             across(any_of(diag_cols), as.character))
-  }, .progress = TRUE)
+  # partitioned Parquet store: the year filter prunes partitions, the id filter
+  # and column projection are pushed into the scan, so only the needed slice is read
+  hes_apc <- open_dataset(path_hes_apc_dir) %>%
+    filter(year >= 2014, year <= 2024, STUDY_ID %in% ncras_og_ids) %>%
+    select(any_of(hes_cols_select)) %>%
+    collect() %>%
+    mutate(STUDY_ID = as.character(STUDY_ID), ADMIMETH = as.character(ADMIMETH),
+           EPISTART = as.Date(EPISTART), ADMIDATE = as.Date(ADMIDATE),
+           across(all_of(op_cols), as.character),
+           across(all_of(opdate_cols), as.Date),
+           across(any_of(diag_cols), as.character))
+  if (nrow(hes_apc) == 0)
+    stop("HES APC read returned 0 rows - likely an id-format mismatch between ",
+         "STUDY_ID and the NCRAS ids. Not saving an empty extract.", call. = FALSE)
   saveRDS(hes_apc, f_hes_apc_extract)
   cat("HES APC extract:", nrow(hes_apc), "rows,",
       n_distinct(hes_apc$STUDY_ID), "patients\n")
@@ -63,20 +62,20 @@ if (refresh_raw || !file.exists(f_hes_apc_extract)) {
 # -----------------------------------------------------------------------------
 if (refresh_raw || !file.exists(f_hes_op_extract)) {
   why_reading("HES OP", f_hes_op_extract)
-  hes_op_files <- list.files(path_hes_op_dir, pattern = "*.txt", full.names = TRUE) %>%
-    keep(~{
-      yr <- str_extract(.x, "(?<=HES_OP_)\\d{4}") %>% as.integer()
-      !is.na(yr) && yr >= 2014
-    })
-  op_cols_select <- c("STUDY_ID","APPTDATE","ATTENDED",
-                      paste0("OPERTN_0", 1:9), paste0("OPERTN_", 10:24),
-                      "PROCODET","TRETSPEF","MAINSPEF")
-  hes_op <- map_dfr(hes_op_files, ~{
-    read_delim(.x, delim = "|", col_select = any_of(op_cols_select),
-               col_types = cols(.default = col_character()), show_col_types = FALSE) %>%
-      filter(STUDY_ID %in% ncras_og_ids, ATTENDED %in% c("5", "6")) %>%
-      mutate(STUDY_ID = as.character(STUDY_ID), appt_date = as.Date(APPTDATE))
-  }, .progress = TRUE)
+  op_cols_select <- c("STUDY_ID","APPTDATE","appt_date","ATTENDED",
+                      "PROCODET","TRETSPEF","MAINSPEF",
+                      paste0("OPERTN_", str_pad(1:24, 2, pad = "0")))
+  # same partitioned-Parquet read; ATTENDED 5/6 (attended) pushed into the scan
+  hes_op <- open_dataset(path_hes_op_dir) %>%
+    filter(year >= 2014, STUDY_ID %in% ncras_og_ids, ATTENDED %in% c("5", "6")) %>%
+    select(any_of(op_cols_select)) %>%
+    collect() %>%
+    mutate(STUDY_ID = as.character(STUDY_ID),
+           appt_date = if ("appt_date" %in% names(.)) as.Date(appt_date)
+           else as.Date(APPTDATE))
+  if (nrow(hes_op) == 0)
+    warning("HES OP read returned 0 rows. OP endoscopy can be sparse, but check ",
+            "this is not an id-format mismatch (STUDY_ID vs NCRAS ids).", call. = FALSE)
   saveRDS(hes_op, f_hes_op_extract)
   cat("HES OP extract:", nrow(hes_op), "rows,",
       n_distinct(hes_op$STUDY_ID), "patients\n")
@@ -111,6 +110,10 @@ if (refresh_raw || !file.exists(f_sact_extract)) {
              benchmark_group_lwr = tolower(trimws(BENCHMARK_GROUP))) %>%
       filter(pseudo_patientid %in% ncras_og_ids)
   }, .progress = TRUE)
+  if (nrow(sact_og) == 0)
+    stop("SACT read returned 0 rows. Likely an id-format mismatch between SACT's ",
+         "PSEUDO_PATIENTID and the NCRAS ids, or no C15/C16 rows in the source. ",
+         "Not saving an empty extract.", call. = FALSE)
   saveRDS(sact_og, f_sact_extract)
   cat("SACT extract:", nrow(sact_og), "rows,",
       n_distinct(sact_og$pseudo_patientid), "patients\n")
@@ -140,6 +143,9 @@ if (refresh_raw || !file.exists(f_rtds_extract)) {
              rt_fractions     = as.integer(PRESCRIBEDFRACTIONS)) %>%
       filter(pseudo_patientid %in% ncras_og_ids)
   }, .progress = TRUE)
+  if (nrow(rtds_og) == 0)
+    stop("RTDS read returned 0 rows. Likely an id-format mismatch or no C15/C16 ",
+         "rows in the source. Not saving an empty extract.", call. = FALSE)
   saveRDS(rtds_og, f_rtds_extract)
   cat("RTDS extract:", nrow(rtds_og), "rows,",
       n_distinct(rtds_og$pseudo_patientid), "patients\n")
@@ -147,4 +153,4 @@ if (refresh_raw || !file.exists(f_rtds_extract)) {
   cat("RTDS extract present - skipping read.\n")
 }
 
-cat("03 complete. Next: 04_derive_comorbidities.R\n")
+cat("03 complete. Next: 04_derive_hes_treatments.R\n")
