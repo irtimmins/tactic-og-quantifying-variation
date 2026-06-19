@@ -29,18 +29,19 @@ local out_dir "`in_dir'"
 local derived "`in_dir'/og_derived_synthetic_stata.dta"
 local cwtfile "`in_dir'/og_cwt_records_synthetic_stata.dta"
 
-* the derived cohort is produced by 02; nudge the analyst if it is not there yet
+* the derived cohort is produced by 02
 capture confirm file "`derived'"
 if _rc di as error "Note: run 02_og_derive_pathway.do first if this stops - derived cohort not found."
 
-* interval / window constants (mirror og_merge_const in the R pipeline)
+* interval / window constants
 local tx_window_days  = 270
 local dtt_min_offset  = -30
 local treat_tol_days  = 14
 
-* surgery coding changeover: within the transition window 01/23/24 all count as
-* surgery; before it only 01, after it only 23/24. See the real build's
-* 01_define_parameters.R for the data behind these bounds.
+* In CWT the 01 surgical modality code was retired in 2020.
+* Hence for surgery there is a coding changeover: 
+* within the transition window 01/23/24 all count as surgery; 
+* before it only 01, after it only 23/24. 
 local surg_start = td(01jan2020)
 local surg_end   = td(30jun2021)
 
@@ -79,7 +80,7 @@ tempfile cwt_grouped
 save `cwt_grouped'
 
 * =============================================================================
-* 2.  Candidate rows: in-window, and (where any exist) pathway-consistent
+* 2.  Identify candidate dtt rows: in-window, and pathway-consistent
 * =============================================================================
 use "`derived'", clear
 keep pseudo_patientid diagmdy tx_pathway first_tx_date
@@ -125,7 +126,8 @@ bysort pseudo_patientid: egen byte any_match = max(group_ok)
 keep if (any_match == 1 & group_ok == 1) | (any_match == 0)
 
 * =============================================================================
-* 3.  Anchor: primary modality wins, then the earliest DTT
+* 3.  Get down to one row per patient: 
+* primary modality wins, then the earliest DTT if still multiple records.
 * =============================================================================
 gsort pseudo_patientid -is_primary cwt_dtt_date
 by pseudo_patientid: keep if _n == 1
@@ -136,7 +138,8 @@ tempfile anchor
 save `anchor'
 
 * =============================================================================
-* 4.  Attach to the derived cohort; derive the waiting-time family + validity
+* 4.  Now attach to the derived nrcas + treatment cohort;
+* derive all the waiting time variables, run a few checks
 * =============================================================================
 use "`derived'", clear
 merge 1:1 pseudo_patientid using `anchor', keep(master match) nogenerate
@@ -174,7 +177,8 @@ replace dtt_valid = . if missing(cwt_dtt_date)
 replace dtt_valid = . if inlist(tx_pathway, "EMR/ESD only", "EMR/ESD then surgery")
 
 * =============================================================================
-* 5.  Audit categories (NOGCA Tables 3 and 4)
+* 5.  May be helpful to present broader audit categories
+* can decide later whether to have neoadjuvant and adjuvant SACT/RT seperately. 
 * =============================================================================
 gen str30 tx_modality_audit = ""
 replace tx_modality_audit = "Surgery only"          if tx_pathway == "Surgery only"

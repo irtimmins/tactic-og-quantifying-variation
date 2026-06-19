@@ -1,17 +1,16 @@
 * =============================================================================
 * OG cancer - step 2: derive the treatment pathway
 * -----------------------------------------------------------------------------
-* Reads the raw synthetic cohort (the per-patient treatment dates, curative
-* descriptors, chemo provenance and provider codes) and derives, in order:
+* Reads the raw synthetic cohort (the per-patient treatment dates, and treament
+* flags etc.) and derives, in order:
 *   - the treatment-presence flags    (had_surgery, had_sact, ...)
 *   - the sequencing flags            (sact_before_surgery, concurrent_chemo_rt)
 *   - tx_pathway                       the treatment-pathway classification
 *   - first_tx_date                    the clock-stop date for that pathway
 *   - tx_trust                         the provider of the clock-stop treatment
 *
-* This mirrors og_derive_pathway() in the R pipeline so the same classification
-* runs on either platform. The pathway is a function of the flags and dates
-* alone; nothing is pre-supplied. Step 3 (03_og_cwt_merge.do) merges the CWT
+* The pathway is a function of the flags and dates alone.
+* The next step, which is Step 3 (03_og_cwt_merge.do) merges the CWT
 * records onto the result.
 *
 * Input : Test_data/og_ncras_treatment_synthetic_stata.dta
