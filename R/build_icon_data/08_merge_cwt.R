@@ -82,16 +82,27 @@ cwt_og <- read_cwt() %>%
   filter(pseudo_patientid %in% ncras_og_ids)
 
 # -----------------------------------------------------------------------------
-# Assign each CWT row a treatment group, applying the surgery (01) rule
+# Assign each CWT row a treatment group, applying the surgery (01/23/24) rule.
+# transition_window: inside [start, end] all three surgery codes count; before
+# the window only 01 counts; after it only 23/24. This rescues the 2020 overlap
+# year, where a single hard switch date would drop early 23/24 and late 01.
+# date_split is the older single-cliff behaviour, kept as a fallback.
 # -----------------------------------------------------------------------------
 cwt_grouped <- cwt_og %>%
   left_join(modality_group, by = "modality") %>%
   mutate(mod_group = case_when(
-    modality == "01" & surg_01_rule == "never"                            ~ NA_character_,
+    # transition window
+    modality == "01" & surg_01_rule == "transition_window" &
+      cwt_treat_date > surg_transition_end                                 ~ NA_character_,
+    modality %in% c("23","24") & surg_01_rule == "transition_window" &
+      cwt_treat_date < surg_transition_start                               ~ NA_character_,
+    # single-cliff fallback
     modality == "01" & surg_01_rule == "date_split" &
-      cwt_treat_date >= surg_switch_date                                  ~ NA_character_,
+      cwt_treat_date >= surg_switch_date                                   ~ NA_character_,
     modality %in% c("23","24") & surg_01_rule == "date_split" &
-      cwt_treat_date < surg_switch_date                                   ~ NA_character_,
+      cwt_treat_date < surg_switch_date                                    ~ NA_character_,
+    # always drop 01 if requested
+    modality == "01" & surg_01_rule == "never"                            ~ NA_character_,
     TRUE                                                                  ~ mod_group)) %>%
   filter(!is.na(mod_group), mod_group != "declined", !is.na(cwt_dtt_date))
 

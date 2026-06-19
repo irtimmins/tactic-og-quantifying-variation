@@ -106,11 +106,22 @@ chemo_rt_concurrent_days <- 14L
 #                    episode does not manufacture chemoRT.
 hes_chemo_near_rt_days <- 28L
 
-# surg_switch_date / surg_01_rule : CWT surgery code 01 was retired on
-#                    2020-10-01 and replaced by 23/24. date_split counts 01 as
-#                    surgery only before the switch and 23/24 only on/after it.
-surg_switch_date <- as.Date("2020-10-01")
-surg_01_rule     <- "date_split"   # one of: date_split | always | never
+# Surgery coding changeover. CWT modality 01 (Surgery) was retired around late
+# 2020 and replaced by 23/24. The OG CWT data show 01 running at ~4,600-5,000/yr
+# through 2019, then 2,920 in 2020, collapsing to 34 in 2021 and gone after; 23/24
+# ramp up across 2020 (1,333) and take over fully from 2021. So 2020 is a genuine
+# overlap year where both codings coexist legitimately.
+#
+# A single hard switch date misclassifies both edges of the transition: it drops
+# early 23/24 submitted before the date, and late 01 submitted after it. Instead,
+# within a transition WINDOW all three codes (01, 23, 24) count as surgery; before
+# it only 01; after it only 23/24. The window spans the 2020 overlap and extends
+# into 2021 H1 as a safety margin for trusts whose changeover lagged a quarter or
+# two (by then 01 is noise - 34 records - so the margin is cheap insurance).
+surg_transition_start <- as.Date("2020-01-01")
+surg_transition_end   <- as.Date("2021-06-30")
+surg_01_rule          <- "transition_window"  # transition_window | date_split | always | never
+surg_switch_date      <- as.Date("2020-10-01")  # retained for the date_split fallback
 
 # treatment pathway levels, in reporting order
 tx_pathway_levels <- c(

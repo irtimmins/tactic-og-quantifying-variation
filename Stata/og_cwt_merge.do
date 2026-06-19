@@ -1,7 +1,6 @@
 *  OG cancer - CWT merge in Stata
 *  ---------------------------------------------------------------------------
-*  Reproduces the R minimal merge (og_cwt_merge) on the two synthetic .dta
-*  files: the registry + treatment cohort (Table A) and the raw CWT records
+*  Starts with the registry + treatment cohort (data A) and then merges the raw CWT records
 *  (Table B). For each patient it picks the single CWT record that matches the
 *  derived treatment pathway, takes the earliest valid decision-to-treat (DTT)
 *  among the matching records, and derives the waiting-time intervals and the

@@ -32,8 +32,14 @@ og_merge_const <- list(
   tx_window_days   = 270L,
   dtt_min_offset   = -30L,
   treat_tol_days   = 14L,
-  surg_switch_date = as.Date("2020-10-01"),
-  surg_01_rule     = "date_split"   # date_split | always | never
+  # surgery coding changeover (mirrors the real build): 01 was replaced by 23/24
+  # around late 2020. Within the transition window all three count as surgery;
+  # before it only 01, after it only 23/24. See the real 01_define_parameters.R
+  # for the data behind the window bounds.
+  surg_transition_start = as.Date("2020-01-01"),
+  surg_transition_end   = as.Date("2021-06-30"),
+  surg_01_rule          = "transition_window",  # transition_window | date_split | always | never
+  surg_switch_date      = as.Date("2020-10-01")  # retained for the date_split fallback
 )
 
 tx_pathway_levels <- c(
@@ -232,12 +238,19 @@ og_cwt_merge <- function(A, cwt, const = og_merge_const) {
     ) %>%
     left_join(og_modality_group, by = "modality") %>%
     mutate(mod_group = case_when(
-      modality == "01" & const$surg_01_rule == "never"      ~ NA_character_,
+      # transition window: inside [start, end] all three surgery codes count;
+      # before it only 01, after it only 23/24
+      modality == "01" & const$surg_01_rule == "transition_window" &
+        cwt_treat_date > const$surg_transition_end            ~ NA_character_,
+      modality %in% c("23","24") & const$surg_01_rule == "transition_window" &
+        cwt_treat_date < const$surg_transition_start          ~ NA_character_,
+      # single-cliff fallback
       modality == "01" & const$surg_01_rule == "date_split" &
-        cwt_treat_date >= const$surg_switch_date            ~ NA_character_,
+        cwt_treat_date >= const$surg_switch_date              ~ NA_character_,
       modality %in% c("23","24") & const$surg_01_rule == "date_split" &
-        cwt_treat_date <  const$surg_switch_date            ~ NA_character_,
-      TRUE                                                  ~ mod_group
+        cwt_treat_date <  const$surg_switch_date              ~ NA_character_,
+      modality == "01" & const$surg_01_rule == "never"        ~ NA_character_,
+      TRUE                                                    ~ mod_group
     )) %>%
     filter(!is.na(mod_group), mod_group != "declined", !is.na(cwt_dtt_date))
   
