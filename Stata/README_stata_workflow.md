@@ -1,13 +1,5 @@
 # OG cancer treatment pathways - Stata workflow
 
-This folder turns two raw NHS-style datasets into one analysis-ready table that
-says, for each oesophago-gastric (OG) cancer patient, **what treatment they had,
-when their treatment clock stopped, and which trust treated them**.
-
-It is the Stata version of the same logic written in R, so both produce the same
-answers. These notes are written for a general reader - you do not need to know
-Stata or statistics to follow what the steps do.
-
 
 ## The two steps
 
@@ -20,7 +12,7 @@ chemotherapy, radiotherapy, and so on) and decides which *pathway* they followed
 recorded". It also works out the single date that counts as the start of
 definitive treatment (the "clock-stop"), and which hospital trust delivered it.
 
-**`03_og_cwt_merge.do` - add the official waiting-times record and finish the table.**
+**`03_og_cwt_merge.do` - add the waiting-times record**
 The NHS keeps a separate Cancer Waiting Times (CWT) record of treatment events.
 This step matches the right CWT record to each patient, works out the waiting
 times between the key milestones (diagnosis, decision to treat, first treatment),
