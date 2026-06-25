@@ -240,7 +240,11 @@ normalise_opcs <- function(x) str_replace_all(str_to_upper(as.character(x)), "\\
 # 03 may lack a column, and a validation run on fixtures could in principle leave
 # a tiny file in place of the real one. This stops with a clear, actionable
 # message rather than letting a downstream step match nothing or fail obscurely.
-check_extract <- function(df, needed, label, extract_path, min_rows = 1000L) {
+# The row floor can be lowered via options(og_min_extract_rows=) - the fixture
+# tests in 09 do this, since they deliberately use tiny extracts; production
+# leaves it at the 1000 default.
+check_extract <- function(df, needed, label, extract_path,
+                          min_rows = getOption("og_min_extract_rows", 1000L)) {
   miss <- setdiff(needed, names(df))
   if (length(miss))
     stop(label, " extract is missing columns: ", paste(miss, collapse = ", "),
@@ -277,7 +281,14 @@ match_opcs_episodes <- function(hes_data, opcs_list, op_cols, opdate_cols) {
   dates_long <- hes_data %>%
     pivot_longer(all_of(opdate_cols), names_to = "opdate_position", values_to = "op_date") %>%
     mutate(op_position_n = as.integer(str_extract(opdate_position, "[0-9]+")),
-           op_date = as.Date(op_date)) %>%
+           op_date = as.Date(op_date),
+           # HES uses 1800-01-01 (occasionally 1801-01-01) as a null-date
+           # sentinel. When the operation date is that sentinel or missing, fall
+           # back to the episode start date - the operation happened during the
+           # episode, so EPISTART is the correct anchor. Without this, a resection
+           # with an unpopulated OPDATE is silently dropped from the anchor.
+           op_date = if_else(is.na(op_date) | op_date <= as.Date("1801-01-01"),
+                             EPISTART, op_date)) %>%
     select(STUDY_ID, EPISTART, EPIORDER, op_position_n, op_date)
   ops_long %>%
     left_join(dates_long,

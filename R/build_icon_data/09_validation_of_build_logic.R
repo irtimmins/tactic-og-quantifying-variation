@@ -28,7 +28,9 @@ dir_build <- "R/build_icon_data"
 # extracts. restore_session() is called on every exit path (success or stop).
 .saved <- mget(c("dir_icon","refresh_raw","read_cwt"),
                ifnotfound = list(NULL), envir = globalenv())
+.saved_opt <- options(og_min_extract_rows = 1L)   # fixtures are tiny by design
 restore_session <- function() {
+  options(.saved_opt)                              # restore the row-floor option
   for (nm in names(.saved)) {
     if (is.null(.saved[[nm]])) suppressWarnings(rm(list = nm, envir = globalenv()))
     else assign(nm, .saved[[nm]], envir = globalenv())
@@ -63,7 +65,8 @@ build_fixture_inputs <- function(spec, dx = as.Date("2018-06-01")) {
   
   saveRDS(spec %>% filter(!is.na(emresd)) %>%
             transmute(pseudo_patientid = id, emresd_date = off(emresd),
-                      days_dx_to_emresd = emresd), f_emresd_anchor)
+                      emresd_provider = "R01A1", days_dx_to_emresd = emresd),
+          f_emresd_anchor)
   
   saveRDS(spec %>% filter(!is.na(surgery)) %>%
             transmute(pseudo_patientid = id, surgery_date = off(surgery),
@@ -110,7 +113,8 @@ make_cwt <- function(spec, dx = as.Date("2018-06-01")) {
     pseudo_patientid = id, site_icd10 = "C159", modality = modality(expect_pathway),
     treat_period_start = fmt(dx + first_off - 10L),
     treat_start = fmt(dx + first_off),
-    crtp_date = fmt(dx - 20L), date_first_seen = fmt(dx - 15L), mdt_date = fmt(dx - 8L))
+    crtp_date = fmt(dx - 20L), date_first_seen = fmt(dx - 15L), mdt_date = fmt(dx - 8L),
+    org_treat_start = "R01A1", org_dec_to_treat = "R01A1")
 }
 
 # =============================================================================
@@ -118,15 +122,23 @@ make_cwt <- function(spec, dx = as.Date("2018-06-01")) {
 # =============================================================================
 cat("\n==========  A. plumbing: full chain (04 -> 08)  ==========\n")
 tmpA <- file.path(tempdir(), "og_logicA"); dir.create(tmpA, showWarnings = FALSE)
-dir_icon <- tmpA; refresh_raw <- FALSE
+# assign into the global env, not 09's local scope: 01 resolves exists("dir_icon")
+# up the scope chain, so a local assignment here would be shadowed by any global
+# dir_icon left by the build. Setting it globally guarantees 01 reads the temp
+# path. restore_session() (defined above) puts the caller's value back on exit.
+assign("dir_icon", tmpA, envir = globalenv())
+assign("refresh_raw", FALSE, envir = globalenv())
 source(file.path(dir_build, "01_define_parameters.R"))
 
 # safety: never write fixtures to the real data folder. If the path did not move
-# to the temp dir, stop before any saveRDS clobbers a real extract.
-if (!startsWith(normalizePath(f_hes_apc_extract, mustWork = FALSE),
-                normalizePath(tmpA, mustWork = FALSE)))
+# to the temp dir, stop before any saveRDS clobbers a real extract. Both paths are
+# normalised to forward slashes so the comparison is not defeated by Windows
+# mixing "\" and "/".
+.fx_path <- normalizePath(f_hes_apc_extract, winslash = "/", mustWork = FALSE)
+.tmp_path <- normalizePath(tmpA, winslash = "/", mustWork = FALSE)
+if (!startsWith(.fx_path, .tmp_path))
   stop("fixture paths did not redirect to the temp folder - aborting to protect ",
-       "Data/ICON. (dir_icon = ", dir_icon, ")", call. = FALSE)
+       "Data/ICON. (fixture = ", .fx_path, ")", call. = FALSE)
 
 dxA <- as.Date("2018-06-01")
 saveRDS(tibble(pseudo_patientid = paste0("p", 1:5), pseudo_tumourid = paste0("t", 1:5),
@@ -151,9 +163,11 @@ saveRDS(bind_rows(mk_apc("p1","G021",dxA+60L,"E119"), mk_apc("p2","G021",dxA+110
                   mk_apc("p1","G459",dxA-3L), mk_apc("p2","G459",dxA-2L),
                   mk_apc("p3","G459",dxA-4L)),   # diagnostic endoscopies pre-dx
         f_hes_apc_extract)
-hes_op <- tibble(STUDY_ID = character(), APPTDATE = as.Date(character()),
-                 ATTENDED = character(), appt_date = as.Date(character()))
-for (i in 1:24) hes_op[[sprintf("OPERTN_%02d", i)]] <- character()
+# HES OP fixture: one attended (ATTENDED 5) diagnostic endoscopy, so the extract
+# is non-empty and the OP-endoscopy branch in 04 is exercised, not just skipped.
+hes_op <- tibble(STUDY_ID = "p5", APPTDATE = dxA - 4L,
+                 appt_date = dxA - 4L, ATTENDED = "5")
+for (i in 1:24) hes_op[[sprintf("OPERTN_%02d", i)]] <- if (i == 1) "G459" else "-"
 saveRDS(hes_op, f_hes_op_extract)
 saveRDS(tibble(pseudo_patientid = c("p2","p3"), sact_regimen_date = c(dxA+20L, dxA+30L),
                sact_cycle_date = c(dxA+20L, dxA+30L), BENCHMARK_GROUP = "FOLFOX",
@@ -167,8 +181,9 @@ cwtA <- tibble(pseudo_patientid = c("p1","p2","p3","p4"), site_icd10 = "C159",
                treat_period_start = fmt(c(dxA+50L,dxA+15L,dxA+25L,dxA+12L)),
                treat_start = fmt(c(dxA+60L,dxA+20L,dxA+30L,dxA+20L)),
                crtp_date = fmt(rep(dxA-10L,4)), date_first_seen = fmt(rep(dxA-5L,4)),
-               mdt_date = fmt(rep(dxA,4)))
-read_cwt <- function() cwtA
+               mdt_date = fmt(rep(dxA,4)),
+               org_treat_start = "R01A1", org_dec_to_treat = "R01A1")
+assign("read_cwt", function() cwtA, envir = globalenv())
 
 for (s in c("04_derive_hes_treatments.R","05_derive_comorbidities.R",
             "06_derive_sact_rtds.R","07_build_pathways.R","08_merge_cwt.R"))
@@ -193,7 +208,7 @@ expect("p1 comorbidity picked up from HES (diabetes)",
 # =============================================================================
 cat("\n==========  B. classification: every pathway + edge cases  ==========\n")
 tmpB <- file.path(tempdir(), "og_logicB"); dir.create(tmpB, showWarnings = FALSE)
-dir_icon <- tmpB
+assign("dir_icon", tmpB, envir = globalenv())   # global, so 01's seam reads it
 source(file.path(dir_build, "01_define_parameters.R"))   # recompute f_ paths at tmpB
 
 # spec: offsets in days from diagnosis (NA = that treatment absent)
@@ -221,7 +236,7 @@ spec <- tribble(
 )
 
 build_fixture_inputs(spec)
-read_cwt <- function() make_cwt(spec)
+assign("read_cwt", function() make_cwt(spec), envir = globalenv())
 source(file.path(dir_build, "07_build_pathways.R"), local = FALSE)
 source(file.path(dir_build, "08_merge_cwt.R"),      local = FALSE)
 

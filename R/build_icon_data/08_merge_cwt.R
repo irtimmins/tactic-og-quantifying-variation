@@ -120,10 +120,11 @@ cwt_candidates <- cwt_grouped %>%
   left_join(pathway_group_long %>% mutate(group_ok = TRUE),
             by = c("tx_pathway", "mod_group" = "ok_group")) %>%
   mutate(group_ok   = coalesce(group_ok, FALSE),
-         is_primary = mod_group == unname(pathway_primary[tx_pathway])) %>%
+         is_primary = !is.na(mod_group) &
+           mod_group == coalesce(unname(pathway_primary[tx_pathway]), "")) %>%
   group_by(pseudo_patientid) %>%
-  mutate(any_match = any(group_ok)) %>%
-  filter(if (first(any_match)) group_ok else TRUE) %>%
+  mutate(any_match = coalesce(any(group_ok), FALSE)) %>%
+  filter(if (isTRUE(first(any_match))) group_ok else TRUE) %>%
   ungroup()
 
 # anchor: primary modality wins, then earliest DTT
@@ -149,11 +150,15 @@ og_cohort <- og_cohort %>%
     wt_endo_to_dtt = as.integer(cwt_dtt_date  - endoscopy_date),
     wt_dtt_to_tx   = as.integer(first_tx_date - cwt_dtt_date),
     wt_dx_to_dtt   = as.integer(cwt_dtt_date  - diagmdy),
-    # valid if DTT is on/after diagnosis and treatment does not precede it by
-    # more than the tolerance; NA for EMR/ESD where the DTT is less meaningful
-    dtt_valid = !is.na(cwt_dtt_date) & wt_dx_to_dtt >= 0 &
+    # dtt_valid asks: did curative treatment follow the decision-to-treat sensibly?
+    # It is only meaningful when there is a curative first_tx_date to check against,
+    # so it is NA for the non-curative pathways (no first_tx_date) and for EMR/ESD
+    # (where the DTT is less meaningful). Otherwise: DTT on/after diagnosis and
+    # treatment not before it beyond tolerance.
+    dtt_valid = !is.na(cwt_dtt_date) & !is.na(first_tx_date) & wt_dx_to_dtt >= 0 &
       wt_dtt_to_tx >= -treat_tol_days,
-    dtt_valid = if_else(tx_pathway %in% c("EMR/ESD only", "EMR/ESD then surgery"),
+    dtt_valid = if_else(is.na(first_tx_date) |
+                          tx_pathway %in% c("EMR/ESD only", "EMR/ESD then surgery"),
                         NA, dtt_valid))
 
 # -----------------------------------------------------------------------------

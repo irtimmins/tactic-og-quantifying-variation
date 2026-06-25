@@ -33,7 +33,7 @@ og_cohort <- ncras_og %>%
               select(pseudo_patientid, endoscopy_date, days_endo_to_dx),
             by = "pseudo_patientid") %>%
   left_join(emresd_anchor %>%
-              select(pseudo_patientid, emresd_date, days_dx_to_emresd),
+              select(pseudo_patientid, emresd_date, emresd_provider, days_dx_to_emresd),
             by = "pseudo_patientid") %>%
   left_join(surgery_anchor %>%
               select(pseudo_patientid, surgery_date, surgery_type, surgery_class,
@@ -121,9 +121,12 @@ og_cohort <- og_cohort %>%
       tx_pathway == "Curative RT only"   ~ rt_date,
       TRUE                               ~ as.Date(NA)),
     
-    # treating trust = provider of the clock-stop treatment
+    # treating trust = provider of the clock-stop treatment. EMR-only patients
+    # have no surgery record, so their trust comes from the EMR provider; EMR-then-
+    # surgery and the surgical pathways take the surgery provider (PROCODE3).
     tx_trust = case_when(
-      tx_pathway %in% c("EMR/ESD only", "EMR/ESD then surgery",
+      tx_pathway == "EMR/ESD only"                         ~ substr(emresd_provider, 1, 3),
+      tx_pathway %in% c("EMR/ESD then surgery",
                         "Surgery + neoadjuvant chemo", "Surgery + adjuvant chemo",
                         "Surgery only", "Surgery + other") ~ substr(PROCODE3, 1, 3),
       tx_pathway %in% c("Surgery + neoadjuvant chemoRT", "Surgery + neoadjuvant RT",

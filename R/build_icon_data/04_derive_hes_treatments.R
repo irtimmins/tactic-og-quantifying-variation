@@ -90,7 +90,8 @@ hes_emresd <- match_opcs_episodes(hes_apc, opcs_emresd, op_cols, opdate_cols)
 
 emresd_anchor <- ncras_og %>%
   select(pseudo_patientid, diagmdy) %>%
-  left_join(hes_emresd %>% select(pseudo_patientid, EPISTART, EPIORDER, opcs4, op_date),
+  left_join(hes_emresd %>% select(pseudo_patientid, EPISTART, EPIORDER, opcs4,
+                                  op_date, PROCODE3),
             by = "pseudo_patientid") %>%
   mutate(days_dx_to_emresd = as.integer(op_date - diagmdy)) %>%
   filter(!is.na(days_dx_to_emresd),
@@ -98,8 +99,8 @@ emresd_anchor <- ncras_og %>%
          days_dx_to_emresd <= tx_window_days) %>%
   arrange(pseudo_patientid, op_date) %>%
   distinct(pseudo_patientid, .keep_all = TRUE) %>%
-  rename(emresd_date = op_date) %>%
-  select(pseudo_patientid, emresd_date, days_dx_to_emresd)
+  rename(emresd_date = op_date, emresd_provider = PROCODE3) %>%
+  select(pseudo_patientid, emresd_date, emresd_provider, days_dx_to_emresd)
 
 saveRDS(emresd_anchor, f_emresd_anchor)
 cat("EMR/ESD anchor:", n_distinct(emresd_anchor$pseudo_patientid), "patients\n")
