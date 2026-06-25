@@ -1,0 +1,15 @@
+# Project environment variables (read once at R startup).
+# -----------------------------------------------------------------------------
+# Cap the thread pools so a session on the shared server never saturates it.
+# These apply to any R session opened in this project. Plain KEY=VALUE only -
+# no R code (that goes in .Rprofile). Adjust the numbers if the server's core
+# budget changes.
+
+# OpenMP / BLAS worker threads (readr, matrix ops, some package internals)
+OMP_NUM_THREADS=6
+OPENBLAS_NUM_THREADS=6
+MKL_NUM_THREADS=6
+
+# arrow's IO thread pool (Parquet read/write). Fewer writers also means less
+# buffer memory during the HES conversion. arrow reads this at load.
+ARROW_IO_THREADS=4
