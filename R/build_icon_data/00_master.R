@@ -34,15 +34,20 @@ step("05_derive_comorbidities.R")  # HES APC (+ surgery/EMR dates) -> Charlson /
 step("06_derive_sact_rtds.R")      # SACT + RTDS (+ HES chemo) -> chemo, RT anchors
 step("07_build_pathways.R")        # assemble -> flags, tx_pathway, audit cats
 step("08_merge_cwt.R")             # CWT -> DTT node, waiting times -> final cohort
+
 # validation
 step("09_validation_of_build_logic.R")  # logic tests on fixtures - proves the code
 step("10_full_validation.R")            # hard assertions on the real cohort - proves the output
 
-# diagnostics - optional, print-only; consult when a check in 10 fails
-# step("11_check_treatment_classification.R")  # leakage, neoadjuvant clock-stop, HES-chemo timing
-# step("12_check_hes_op.R")                    # HES-OP endoscopy coverage
-# step("13_check_cwt_surgery.R")
-step("check_cwt_residual.R")
+# diagnostics - optional, print-only; consult when a check in 10 fails or to
+# investigate a specific question. None of these change the cohort. The three CWT
+# scripts are a sequence: 13 describes the group, 14 inspects the raw record, 15
+# drills into the specialist-centre residual.
+ step("11_check_treatment_classification.R")  # leakage, neoadjuvant clock-stop, HES-chemo timing
+ step("12_check_hes_op.R")                     # HES-OP endoscopy coverage
+ step("13_check_cwt_surgery.R")                # CWT surgery vs HES resection - characterise
+ step("14_check_cwt_records.R")               # what the raw CWT record actually is
+ step("15_check_cwt_residual.R")              # specialist-centre residual, HES contents
 
 message("\nBuild complete. Final cohort: ", file.path("Data/ICON",
                                                       "og_cohort_cwt_2015_2022.rds"))
