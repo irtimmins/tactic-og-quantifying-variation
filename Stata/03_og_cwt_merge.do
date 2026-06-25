@@ -169,12 +169,11 @@ gen wt_rt_to_surg   = surgery_date - rt_date
 * dtt_valid: DTT on/after diagnosis and treatment not before it beyond tolerance.
 * The !missing(first_tx_date) guard matters in Stata: a missing wt_dtt_to_tx would
 * otherwise satisfy ">= -tol" (Stata treats missing as +infinity), wrongly scoring
-* the non-curative pathways valid. Missing for the EMR/ESD pathways and where there
-* is no DTT, matching R's NA.
+* the non-curative pathways valid. 
 gen byte dtt_valid = !missing(cwt_dtt_date) & !missing(first_tx_date) & ///
                      wt_dx_to_dtt >= 0 & wt_dtt_to_tx >= -`treat_tol_days'
 replace dtt_valid = . if missing(cwt_dtt_date)
-replace dtt_valid = . if inlist(tx_pathway, "EMR/ESD only", "EMR/ESD then surgery")
+* (double check how DTT works for minimally invasive) replace dtt_valid = . if inlist(tx_pathway, "EMR/ESD only", "EMR/ESD then surgery")
 
 * =============================================================================
 * 5.  May be helpful to present broader audit categories
