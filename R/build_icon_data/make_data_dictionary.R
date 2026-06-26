@@ -4,9 +4,9 @@
 # Self-contained. The reviewed dictionary content is the dict tibble below, one
 # row per variable in the cohort's column order. The script fills in the live
 # type and completeness, assigns a tier, and writes a four-tab workbook:
-# It produces ONE sheet. A few guidance rows at the top (cohort, shading key,
-# curative subsetting, core waiting times, method notes, pathways) orient the
-# reader, then one row per variable, shaded by tier:
+# It produces ONE sheet. A short guidance preamble sits ABOVE the table (cohort,
+# shading key, curative subsetting, core waiting times, method notes, pathways)
+# in light blue; below it, one row per variable, shaded by tier:
 #   core      (soft green)  essential for the epidemiological analysis
 #   secondary (soft amber)  useful, but mostly feeds a core variable or is
 #                           modality-specific
@@ -51,24 +51,24 @@ dict <- tibble::tribble(
   "agediag", "Age at diagnosis, in years. Patient age on the diagnosis date.", "range 19.2909 to 104.668 (median 73.12526)", "NCRAS Cancer registry (AGE)", "essential - core demographic",
   "birthmdy", "Date of birth. Registry best date of birth (day set to the 1st where only month/year known).", "range 1911-01-15 to 1999-11-15", "NCRAS Cancer registry (BIRTHDATEBEST)", "may be useful to look at, but agediag is normally what you want",
   "ethnicity_group_broad", "Broad ethnicity group. Grouped from the 16+1 census ethnicity categories (White, Asian, Black, Mixed, Chinese, Other, Not known); the grouping was applied by NDRS to this project's specification.", "Asian | Black | Chinese | Mixed | Not known | Other | White", "NCRAS Cancer registry (ETHNICTY_GROUP_BROAD, derived by NDRS)", "essential - core demographic",
-  "lsoa11_code", "Lower-layer Super Output Area (2011) of residence at diagnosis. Small-area geography (~1,500 residents) used to attach deprivation and area measures; not for analysis on its own.", "22207 distinct values (id / free-text)", "NCRAS Cancer registry (LSOA11_CODE, pseudonymised)", "ignore for analysis - underlies the IMD/area fields (may help derive travel times)",
+  "lsoa11_code", "Lower-layer Super Output Area (2011) of residence at diagnosis. Small-area geography (~1,500 residents) used to attach deprivation and area measures; not used directly in analysis but could support deriving patient travel times to treatment.", "22207 distinct values (id / free-text)", "NCRAS Cancer registry (LSOA11_CODE, pseudonymised)", "may be useful later - e.g. to derive patient travel times to treatment; otherwise the IMD/area fields are derived from it",
   "NHSE_reversed_imd_quintile_lsoas", "Area-level deprivation quintile (REVERSED direction). The English Index of Multiple Deprivation 2019 - a composite area-level measure combining income, employment, education, health, crime, housing and environment, assigned by the patient's LSOA of residence, NOT an individual income measure. NDRS supplies IMD as 1 = least deprived to 5 = most deprived; THIS variable is reversed, so here 1 = MOST deprived and 5 = LEAST deprived. Check the direction before interpreting.", "1 - most deprived | 2 | 3 | 4 | 5 - least deprived", "NCRAS / English IMD 2019 (imd19_quintile_lsoas, reversed)", "essential - deprivation; note 1 = most deprived here",
   "canalliance_2024_code", "Cancer Alliance code (2024 geography). Code for the regional Cancer Alliance of the patient's area; the organisational geography for regional comparisons.", "E56000005 | ... | E56000035", "Derived (NCRAS geography)", "useful - for regional analysis",
   "canalliance_2024_name", "Cancer Alliance name. The readable name matching canalliance_2024_code.", "Cheshire and Merseyside | ... | West Yorkshire and Harrogate", "Derived (NCRAS geography)", "useful - for regional analysis",
-  "diag_trust", "Trust of diagnosis (code). NHS trust that diagnosed the patient.", "132 distinct values (id / free-text)", "NCRAS Cancer registry (DIAG_TRUST, pseudonymised)", "useful - trust of diagnosis",
+  "diag_trust", "Trust of diagnosis (code). NHS trust that diagnosed the patient; the provider unit for diagnosis-level variation.", "132 distinct values (id / free-text)", "NCRAS Cancer registry (DIAG_TRUST, pseudonymised)", "essential - trust of diagnosis",
   "diag_trust_name", "Trust of diagnosis (name). Readable name for diag_trust.", "132 distinct values (id / free-text)", "NCRAS Cancer registry (DIAG_TRUST_NAME)", "useful - readable trust of diagnosis",
   "first_trust", "Trust of first recorded event (code). Trust for the patient's first event in the pathway, which may differ from the diagnosing trust.", "136 distinct values (id / free-text)", "NCRAS Cancer registry (FIRST_TRUST, pseudonymised)", "may be useful to look at, but diag_trust is normally the reference",
   "first_trust_name", "Trust of first event (name). Readable name for first_trust.", "136 distinct values (id / free-text)", "NCRAS Cancer registry (FIRST_TRUST_NAME)", "may be useful to look at, but diag_trust is normally the reference",
   "first_hosp_date", "Date of first recorded event. Date of the patient's first event in the registry pathway.", "2946 distinct values (id / free-text)", "NCRAS Cancer registry (FIRST_HOSP_DATE)", "may be useful to look at, but unlikely to be needed",
-  "diag_hosp", "Diagnosing hospital site. Hospital (site-level) of diagnosis.", "392 distinct values (id / free-text)", "NCRAS Cancer registry (DIAG_HOSP)", "may be useful to look at, but trust-level is normally enough",
+  "diag_hosp", "Diagnosing hospital site. Hospital (site-level) of diagnosis - finer than diag_trust where site-level detail is wanted.", "392 distinct values (id / free-text)", "NCRAS Cancer registry (DIAG_HOSP)", "essential - diagnosing hospital site",
   "route_bjc", "Route to diagnosis, BJC grouping. A regrouping of the route algorithm into the categories used in the Routes to Diagnosis (BJC) work; an INPUT used to build route_combined, not the field to report.", "Emergency presentation | GP referral | Inpatient elective | Other outpatient | Screening | TWW", "NCRAS Routes to Diagnosis", "ignore - input to route_combined; report final_route",
-  "final_route", "Route to diagnosis - the one to use. The published, finalised route to diagnosis with all dataset types accounted for (Emergency presentation, GP referral, TWW, Screening, Other outpatient, Inpatient elective, Unknown). route_code and route_bjc are the algorithm's internal inputs used to derive it and should not be reported on their own.", "| Emergency presentation | GP referral | Inpatient elective | Other outpatient | TWW | Unknown", "NCRAS Routes to Diagnosis (FINAL_ROUTE)", "essential - the definitive route-to-diagnosis variable",
+  "final_route", "Published registry route to diagnosis. The finalised NCRAS route with all dataset types accounted for; feeds route_combined, which is the variable to use for analysis here. route_code and route_bjc are earlier inputs.", "| Emergency presentation | GP referral | Inpatient elective | Other outpatient | TWW | Unknown", "NCRAS Routes to Diagnosis (FINAL_ROUTE)", "useful - feeds route_combined (the variable to use)",
   "route_code", "Route to diagnosis, internal algorithm code. The raw code the routes algorithm assigns; an input behind final_route, not for reporting.", "63 distinct values (id / free-text)", "NCRAS Routes to Diagnosis (ROUTE_CODE)", "ignore - input to final_route",
   "sg_flag", "Registry surgery flag (raw). NCRAS's own indicator that the patient had surgery to remove the primary tumour (1 = yes, 0 = none recorded). This is the REGISTRY flag, not this build's surgery ascertainment; the build uses HES (had_surgery / curative_surgery), which is the gold standard.", "| 0 | 1", "NCRAS Cancer registry (SG_FLAG)", "ignore for analysis - use had_surgery / curative_surgery",
   "rt_flag", "Registry radiotherapy flag (raw). NCRAS indicator of any radiotherapy (1/0). Superseded for analysis by the RTDS-based had_rt / had_curative_rt.", "| 0 | 1", "NCRAS Cancer registry (RT_FLAG)", "ignore for analysis - use had_rt / had_curative_rt",
   "ct_flag", "Registry chemotherapy flag (raw). NCRAS indicator of any chemotherapy (1/0). Superseded for analysis by the SACT-based had_sact.", "| 0 | 1", "NCRAS Cancer registry (CT_FLAG)", "ignore for analysis - use had_sact",
   "dead", "Death indicator (raw registry). Registry vital-status flag; the cleaned analysis version is 'died'.", "range 0 to 1 (median 1)", "NCRAS Cancer registry (vital status)", "ignore for analysis - use died",
-  "finmdy", "Final follow-up / death date. Date of death or last known follow-up.", "range 2015-01-10 to 2023-12-31", "NCRAS / ONS", "useful - for survival analysis",
+  "finmdy", "Final follow-up / death date. Date of death or last known follow-up.", "range 2015-01-10 to 2023-12-31", "NCRAS / ONS", "needed only for survival analysis - follow-up/death date",
   "dco", "Death-certificate-only flag. Whether the cancer was known only from the death certificate (Y/N); DCO cases are typically excluded.", "N", "NCRAS Cancer registry (DCO)", "may be useful to look at, but unlikely to be needed - quality/exclusion check",
   "morphology_num", "Numeric ICD-O morphology code. The numeric histology code (8000-9990) behind cancer_subtype.", "range 8010 to 8576 (median 8140)", "NCRAS Cancer registry (MORPH_ICD10_O2)", "ignore for analysis - use cancer_subtype",
   "tumour_site_grp", "Site group for analysis: oesophageal or gastric. The two-way split used throughout, derived from the ICD-10 site.", "gastric | oesophageal", "Derived from sitestr", "essential - the oesophageal/gastric split",
@@ -76,14 +76,14 @@ dict <- tibble::tribble(
   "stage_clean", "Cleaned analysis stage, restricted to 1-3. Sub-stages collapsed to whole numbers and the cohort limited to stages 1-3; this IS the analysis-stage variable and part of the cohort definition.", "1 | 2 | 3", "Derived from stage_best", "essential - the analysis stage and part of the cohort definition",
   "final_route_chr", "Cleaned label of final_route. A tidied character version of final_route for display.", "Emergency presentation | GP referral | Inpatient elective | Other outpatient | TWW | Unknown", "Derived from final_route", "useful - same content as final_route",
   "route_bjc_chr", "Cleaned label of route_bjc. Tidied character version of the BJC route input.", "Emergency presentation | GP referral | Inpatient elective | Other outpatient | Screening | TWW", "Derived from route_bjc", "ignore - input only",
-  "route_combined", "Combined route factor used in this build. The route variable assembled for analysis; final_route is the authoritative source it is built on.", "Emergency presentation | GP referral | Inpatient elective | Other outpatient | Screening | TWW | Unknown", "Derived from final_route / route inputs", "useful - or final_route; they agree",
-  "emergency_admission", "Diagnosed via an emergency admission (flag). 1 if the route to diagnosis was an emergency presentation; corresponds to NOGCA Performance Indicator 1.", "range 0 to 1 (median 0)", "Derived from final_route", "essential - enables exclusion of emergency cases for waiting-time work",
-  "surv_from_dx_days", "Days survived from diagnosis. Interval from diagnosis to death or censoring; the basis for overall survival.", "range 1 to 3285 (median 537)", "Derived (diagnosis to ONS death)", "essential - overall survival time",
-  "died", "Death indicator for analysis. Cleaned 0/1 death flag paired with surv_from_dx_days.", "range 0 to 1 (median 1)", "Derived", "essential - survival event flag",
+  "route_combined", "Route to diagnosis - the variable to use. The combined route assembled for analysis, including an emergency-presentation category; use this for route-to-diagnosis work and to exclude emergency cases. final_route and the raw route fields are inputs behind it.", "Emergency presentation | GP referral | Inpatient elective | Other outpatient | Screening | TWW | Unknown", "Derived from final_route / route inputs", "essential - the route-to-diagnosis variable (use to exclude emergency cases)",
+  "emergency_admission", "Diagnosed via an emergency admission (flag). 1 if the route to diagnosis was an emergency presentation (NOGCA Performance Indicator 1). route_combined already carries an emergency-presentation category, so use that to exclude emergency cases rather than this flag.", "range 0 to 1 (median 0)", "Derived from final_route", "useful - but route_combined already flags emergency cases",
+  "surv_from_dx_days", "Days survived from diagnosis. Interval from diagnosis to death or censoring; the basis for overall survival.", "range 1 to 3285 (median 537)", "Derived (diagnosis to ONS death)", "needed only for survival analysis - the survival time",
+  "died", "Death indicator for analysis. Cleaned 0/1 death flag paired with surv_from_dx_days.", "range 0 to 1 (median 1)", "Derived", "needed only for survival analysis - the event flag (pair with surv_from_dx_days)",
   "ps_num", "WHO performance status at diagnosis (0-4). How well the patient functions day-to-day (0 fully active to 4 completely disabled); in many contexts a key risk-adjustment variable but often incomplete.", "range 0 to 4 (median 1)", "NCRAS COSD (tumour_performancestatus)", "useful - risk-adjustment variable, but note completeness",
   "cnsinvolved", "Clinical nurse specialist involvement (flag). Whether a CNS was recorded as involved (NOGCA PI4); incomplete.", "range 0 to 1 (median 1)", "NCRAS COSD (clinicalnursespecialist)", "may be useful to look at, but unlikely to be needed - low completeness",
-  "endoscopy_date", "Date of the diagnostic endoscopy. First diagnostic upper-GI endoscopy near diagnosis, from HES (admitted or outpatient); the start point for endoscopy-to-treatment waits.", "range 2014-12-08 to 2022-12-31", "HES APC / OP (OPCS-4 endoscopy codes, NOGCA Appendix 6)", "essential - the endoscopy clock start for waiting times",
-  "days_endo_to_dx", "Days from endoscopy to diagnosis. Interval between the diagnostic endoscopy and the diagnosis date; one of the core waiting-time intervals.", "range 0 to 30 (median 0)", "Derived", "essential - a core waiting-time interval (endoscopy to diagnosis)",
+  "endoscopy_date", "Date of the diagnostic endoscopy. First diagnostic upper-GI endoscopy near diagnosis, from HES (admitted or outpatient); the clock start behind the endoscopy-based waits.", "range 2014-12-08 to 2022-12-31", "HES APC / OP (OPCS-4 endoscopy codes, NOGCA Appendix 6)", "may be useful to look at, but the derived endoscopy waits are normally what you need",
+  "days_endo_to_dx", "Days from endoscopy to diagnosis. Interval between the diagnostic endoscopy and the diagnosis date; useful context for the diagnostic interval but not a core analysis wait.", "range 0 to 30 (median 0)", "Derived", "may be useful to look at, but not expected to be a core analysis variable",
   "emresd_date", "Date of EMR/ESD endotherapy. Endoscopic mucosal/submucosal resection - a curative treatment for early disease; presence of a date means the patient had EMR/ESD in window.", "range 2015-01-05 to 2023-06-24", "HES APC (OPCS-4 EMR/ESD codes, NOGCA Appendix 7)", "essential - a curative treatment date",
   "emresd_provider", "Provider (trust) of the EMR/ESD. Trust that performed the endoscopic resection; used to assign tx_trust for EMR-only patients.", "131 distinct values (id / free-text)", "HES APC (PROCODE3 on the EMR/ESD episode)", "may be useful to look at, but unlikely to be needed - trust attribution only",
   "days_dx_to_emresd", "Days from diagnosis to EMR/ESD. Interval to the endoscopic resection.", "range -29 to 275 (median 46)", "Derived", "useful - interval to EMR/ESD",
@@ -131,7 +131,7 @@ dict <- tibble::tribble(
   "received_curative_tx", "Received any curative treatment (build-level flag). The internal curative flag from the pathway build; the audit version (received_curative_tx_audit) is the one to report.", "FALSE | TRUE", "Derived", "ignore - use received_curative_tx_audit",
   "tx_pathway", "Treatment pathway - the main treatment variable. One of 14 mutually exclusive categories summarising what curative/non-curative treatment the patient received and in what combination (see the Pathways tab). The headline treatment classification for most analyses.", "Curative RT only | ... | Surgery only", "Derived (treatment anchors + timing)", "essential - the main treatment variable",
   "first_tx_date", "Date of first curative treatment. The clock-stop date for curative pathways (earliest of EMR/surgery/chemo/RT as applicable); NA for non-curative pathways.", "range 2015-01-01 to 2023-08-02", "Derived", "useful - clock-stop date for curative waiting times",
-  "tx_trust", "Treating trust for the curative clock-stop. Trust credited with the curative treatment (surgery provider, EMR provider, or RT provider as appropriate); NA for non-curative patients. The unit for trust-level variation analysis.", "133 distinct values (id / free-text)", "Derived (PROCODE3 / emresd_provider / ORGCODEPROVIDER)", "essential - for trust-level analysis",
+  "tx_trust", "Treating trust for the curative clock-stop. Trust credited with the curative treatment (surgery, EMR or RT provider as appropriate); NA for non-curative patients. This is TRUST-level, not hospital site: SACT and RTDS report only the 5-digit site code inconsistently, so treatment is resolved to trust to keep it comparable across modalities. The unit for trust-level variation analysis.", "133 distinct values (id / free-text)", "Derived (PROCODE3 / emresd_provider / ORGCODEPROVIDER)", "essential - the treating trust for variation analysis (trust-level, not hospital site)",
   "wt_dx_to_tx", "Waiting time: diagnosis to first treatment (days). Days from diagnosis to first curative treatment.", "range -29 to 274 (median 57)", "Derived", "useful - diagnosis-to-treatment wait, but unlikely to be the primary interval",
   "wt_endo_to_tx", "Waiting time: endoscopy to first treatment (days). NOGCA-style wait from diagnostic endoscopy to first treatment.", "range -29 to 292 (median 60)", "Derived", "useful - endoscopy-to-treatment wait, but unlikely to be the primary interval",
   "wt_dx_to_surg", "Waiting time: diagnosis to surgery (days).", "range -16 to 275 (median 149)", "Derived", "may be useful to look at, but unlikely to be needed - modality-specific wait",
@@ -150,9 +150,9 @@ dict <- tibble::tribble(
   "cwt_mdt_date", "CWT MDT meeting date. Date the case was discussed at the multidisciplinary team meeting.", "range 2000-01-01 to 2021-03-17", "CWT (MDT_DATE)", "may be useful to look at, but unlikely to be needed - incomplete",
   "cwt_treat_date", "CWT treatment-start date. Treatment start date as recorded in CWT. Note: CWT is used for DATES only - NOT to decide whether treatment happened (HES/SACT/RTDS do that).", "range 2014-12-29 to 2023-08-29", "CWT (TREAT_START)", "useful - treatment date (for waits, not for ascertaining treatment)",
   "cwt_modality", "CWT treatment modality code. The kind of treatment CWT recorded (01/23/24 surgery, 02/04/05 chemo/RT, 07/08/09 palliative care, etc.); used to align the CWT date with the right treatment, not to define treatment.", "01 | 02 | ... | 97", "CWT (MODALITY)", "may be useful to look at, but unlikely to be needed - alignment only, see Sources tab",
-  "wt_endo_to_dtt", "Waiting time: endoscopy to decision-to-treat (days). One of the core waiting-time intervals.", "range -30 to 287 (median 43)", "Derived", "essential - a core waiting-time interval (endoscopy to decision-to-treat)",
+  "wt_endo_to_dtt", "Waiting time: endoscopy to decision-to-treat (days). The core decision-to-treat wait, measured from the diagnostic endoscopy - the audit-aligned clock start, preferred over the diagnosis-date version (wt_dx_to_dtt).", "range -30 to 287 (median 43)", "Derived", "essential - the core endoscopy-to-decision-to-treat wait (audit-aligned clock start)",
   "wt_dtt_to_tx", "Waiting time: decision-to-treat to first treatment (days). The core decision-to-treatment interval.", "range -268 to 274 (median 13)", "Derived", "essential - a core waiting-time interval (decision-to-treat to treatment)",
-  "wt_dx_to_dtt", "Waiting time: diagnosis to decision-to-treat (days). One of the core waiting-time intervals.", "range -30 to 270 (median 42)", "Derived", "essential - a core waiting-time interval (diagnosis to decision-to-treat)",
+  "wt_dx_to_dtt", "Waiting time: diagnosis to decision-to-treat (days). The interval from the registry diagnosis date to the decision to treat; wt_endo_to_dtt (from the diagnostic endoscopy) is the better clock start and aligns with the audit standard, so prefer that for the core analysis.", "range -30 to 270 (median 42)", "Derived", "useful - but prefer wt_endo_to_dtt (endoscopy is the audit-aligned clock start)",
   "dtt_valid", "Decision-to-treat record is usable (flag). TRUE/FALSE where the CWT decision-to-treat can be trusted for waiting times; NA where there is no curative first treatment to validate against. Filter to dtt_valid == TRUE before reporting decision-to-treatment waits.", "FALSE | TRUE", "Derived", "essential - the filter for clean decision-to-treat waits",
   "tx_modality_audit", "Audit treatment-modality category. A higher-level grouping that matches NOGCA's reporting categories (Surgery only, Surgery plus SACT/RT, Definitive chemoRT, EMR/ESD, Curative RT only, Chemo/RT only (non-curative), No treatment recorded). For figures comparable to the published audit; tx_pathway gives the finer 14-way detail.", "Chemo/RT only (non-curative) | ... | Surgery plus SACT/RT", "Derived", "useful - for audit-comparable reporting; tx_pathway gives the detail",
   "tx_intent_audit", "Audit treatment intent: Curative / Non-curative / No treatment. A three-way summary of treatment intent.", "Curative | No treatment | Non-curative", "Derived", "useful - simple curative/non-curative split; received_curative_tx_audit is the headline flag",
@@ -161,7 +161,7 @@ dict <- tibble::tribble(
 
 # core = essential for the epidemiological analysis (green). Everything not core
 # is "secondary" (amber) unless its recommendation starts "ignore" (grey).
-core_vars <- c("pseudo_patientid", "diagmdy", "sex", "agediag", "ethnicity_group_broad", "NHSE_reversed_imd_quintile_lsoas", "final_route", "tumour_site_grp", "cancer_subtype", "stage_clean", "emergency_admission", "surv_from_dx_days", "died", "endoscopy_date", "days_endo_to_dx", "cci_group", "tx_pathway", "wt_endo_to_dtt", "wt_dtt_to_tx", "wt_dx_to_dtt", "dtt_valid", "received_curative_tx_audit")
+core_vars <- c("pseudo_patientid", "diagmdy", "sex", "agediag", "ethnicity_group_broad", "NHSE_reversed_imd_quintile_lsoas", "route_combined", "tumour_site_grp", "cancer_subtype", "stage_clean", "diag_trust", "diag_hosp", "cci_group", "tx_pathway", "tx_trust", "wt_endo_to_dtt", "wt_dtt_to_tx", "dtt_valid", "received_curative_tx_audit")
 
 # -----------------------------------------------------------------------------
 # guard: the reviewed content must still match the live cohort exactly
@@ -192,70 +192,88 @@ dictionary <- dict %>%
          source, recommendation)
 
 # -----------------------------------------------------------------------------
-# Cross-cutting guidance, folded into the single sheet as leading note rows.
-# These sit above the variable list so the reader sees the orientation first.
-# tier "note" is shaded a neutral blue so it reads as guidance, not a variable.
-# -----------------------------------------------------------------------------
-notes <- tibble::tribble(
-  ~variable, ~tier, ~definition, ~type, ~pct_complete, ~values, ~source, ~recommendation,
-  "ABOUT THIS COHORT", "note",
+# preamble: short guidance blocks shown ABOVE the table, in sentence case.
+# Written as heading + text pairs into the top rows, light blue, so they orient
+# the reader without taking a column slot or pushing the variables off-screen.
+preamble <- tibble::tribble(
+  ~heading, ~text,
+  "About this cohort",
   "Oesophago-gastric cancer (ICD-10 C15 oesophagus, C16 stomach), stage 1-3, diagnosed 2015-2022, England. One row per patient. Sources: NCRAS cancer registry (demographics, tumour, stage, route, survival); HES APC/OP (surgery, EMR/ESD, endoscopy, comorbidity); SACT (chemo); RTDS (radiotherapy); CWT (waiting-time dates only).",
-  "", NA_real_, "", "", "",
   
-  "HOW TO READ THE SHADING", "note",
+  "How to read the shading",
   "Green = core: essential for the epidemiological analysis, reach for these first. Amber = secondary: useful but mostly feeds a core variable or is modality-specific. Grey = ignore: raw inputs or helpers, not for analysis. The recommendation column gives the per-variable steer.",
-  "", NA_real_, "", "", "",
   
-  "SUBSETTING TO THE CURATIVE COHORT", "note",
-  "Simplest: filter received_curative_tx_audit == TRUE (matches the audit's curative definition). Equivalently tx_intent_audit == 'Curative', or keep the curative tx_pathway categories. Curative = EMR/ESD, curative-intent surgery (excludes stage-4 partial gastrectomy per NOGCA), definitive chemoRT, or curative-dose RT. Do NOT define curative treatment from the raw registry flags (sg_flag/rt_flag/ct_flag) or raw SACT inputs (INTENT_OF_TREATMENT_V3, BENCHMARK_GROUP, CHEMO_RADIATION).",
-  "", NA_real_, "", "", "",
+  "Subsetting to the curative cohort",
+  "Simplest: filter received_curative_tx_audit == TRUE (matches the audit's curative definition). Equivalently tx_intent_audit == 'Curative', or keep the curative tx_pathway categories. Curative = EMR/ESD, curative-intent surgery (excludes stage-4 partial gastrectomy per NOGCA), definitive chemoRT, or curative-dose RT. Do not define curative treatment from the raw registry flags (sg_flag/rt_flag/ct_flag) or raw SACT inputs.",
   
-  "CORE WAITING TIMES", "note",
-  "The core intervals are days_endo_to_dx (endoscopy to diagnosis), wt_dx_to_dtt / wt_endo_to_dtt (to decision-to-treat) and wt_dtt_to_tx (decision-to-treat to treatment). Filter dtt_valid == TRUE before reporting decision-to-treatment waits. The modality-specific and diagnosis-to-X waits are secondary.",
-  "", NA_real_, "", "", "",
+  "Core waiting times",
+  "The core intervals are wt_endo_to_dtt (endoscopy to the decision to treat - the audit-aligned clock start) and wt_dtt_to_tx (decision to treat to treatment). Filter dtt_valid == TRUE before reporting decision-to-treatment waits. The diagnosis-based version wt_dx_to_dtt, the modality-specific waits, the other diagnosis-to-X waits and days_endo_to_dx are secondary - useful context but not core.",
   
-  "KEY METHOD NOTES", "note",
-  "Surgery is ascertained from HES APC (gold standard; OPCS-4 matches NOGCA Appendix 8) - CWT surgery codes without a HES resection are not counted. Treatments counted up to 275 days (~9 months) after diagnosis. IMD here is REVERSED (1 = most deprived). final_route is the route variable to use. References: NOGCA State of the Nation 2025 Methodology Supplement; NDRS DARS data dictionary; NHS England HES Data Dictionary.",
-  "", NA_real_, "", "", "",
+  "Key method notes",
+  "Surgery is ascertained from HES APC (gold standard; OPCS-4 matches NOGCA Appendix 8) - CWT surgery codes without a HES resection are not counted. Treatments counted up to 275 days (~9 months) after diagnosis. IMD here is reversed (1 = most deprived). Use route_combined for route to diagnosis, and exclude emergency cases by dropping its 'Emergency presentation' category. References: NOGCA State of the Nation 2025 Methodology Supplement; NDRS DARS data dictionary; NHS England HES Data Dictionary.",
   
-  "TREATMENT PATHWAYS (tx_pathway)", "note",
-  "Curative: Surgery only; Surgery + neoadjuvant chemo / RT / chemoRT; Surgery + adjuvant chemo; Surgery + other; EMR/ESD only; EMR/ESD then surgery; Definitive chemoRT; Curative RT only. Non-curative: Palliative chemo + RT; SACT only; Palliative RT only. And: No treatment recorded.",
-  "", NA_real_, "", "", ""
+  "Treatment pathways (tx_pathway)",
+  "Curative: surgery only; surgery + neoadjuvant chemo / RT / chemoRT; surgery + adjuvant chemo; surgery + other; EMR/ESD only; EMR/ESD then surgery; definitive chemoRT; curative RT only. Non-curative: palliative chemo + RT; SACT only; palliative RT only. And: no treatment recorded."
 )
 
-sheet_df <- bind_rows(notes, dictionary)
-
 # -----------------------------------------------------------------------------
-# write the single-sheet workbook
+# write the single-sheet workbook: preamble block, then the variable table
 # -----------------------------------------------------------------------------
 out <- file.path(dir_icon, "og_cohort_data_dictionary.xlsx")
 wb  <- createWorkbook()
+addWorksheet(wb, "Dictionary")
+
+ncol_tbl    <- ncol(dictionary)               # table is this many columns wide
+table_start <- nrow(preamble) + 2             # leave a blank row under the preamble
+
+# --- preamble styles (light blue) ---
+pre_head <- createStyle(fgFill = "#EAF1F8", fontColour = "#1F4E79",
+                        textDecoration = "bold", valign = "top", wrapText = TRUE,
+                        border = "TopBottomLeftRight", borderColour = "#D2DCEA")
+pre_text <- createStyle(fgFill = "#F4F8FC", fontColour = "#33475B",
+                        valign = "top", wrapText = TRUE,
+                        border = "TopBottomLeftRight", borderColour = "#D2DCEA")
+
+for (i in seq_len(nrow(preamble))) {
+  writeData(wb, "Dictionary", preamble$heading[i], startCol = 1, startRow = i, colNames = FALSE)
+  writeData(wb, "Dictionary", preamble$text[i],    startCol = 2, startRow = i, colNames = FALSE)
+  addStyle(wb, "Dictionary", pre_head, rows = i, cols = 1, stack = TRUE)
+  # the text spans the remaining columns for readability
+  mergeCells(wb, "Dictionary", cols = 2:ncol_tbl, rows = i)
+  addStyle(wb, "Dictionary", pre_text, rows = i, cols = 2:ncol_tbl,
+           gridExpand = TRUE, stack = TRUE)
+}
+
+# --- the variable table, starting below the preamble ---
 hdr  <- createStyle(textDecoration = "bold", valign = "top", halign = "left",
                     fgFill = "#E8EEF4", border = "bottom")
-wrap <- createStyle(wrapText = TRUE, valign = "top")
-
-addWorksheet(wb, "Dictionary")
-writeData(wb, "Dictionary", sheet_df, headerStyle = hdr)
-setColWidths(wb, "Dictionary", cols = seq_along(sheet_df),
+writeData(wb, "Dictionary", dictionary, startRow = table_start, headerStyle = hdr)
+setColWidths(wb, "Dictionary", cols = seq_len(ncol_tbl),
              widths = c(variable = 26, tier = 11, definition = 82, type = 10,
                         pct_complete = 12, values = 40, source = 38,
                         recommendation = 50))
-addStyle(wb, "Dictionary", wrap, rows = 2:(nrow(sheet_df) + 1),
-         cols = seq_along(sheet_df), gridExpand = TRUE, stack = TRUE)
-freezePane(wb, "Dictionary", firstActiveRow = nrow(notes) + 2)
+
+# wrap + light dashed bottom border on every table body row, for legibility
+body_rows <- (table_start + 1):(table_start + nrow(dictionary))
+row_line  <- createStyle(wrapText = TRUE, valign = "top",
+                         border = "bottom", borderColour = "#D9D9D9",
+                         borderStyle = "dashed")
+addStyle(wb, "Dictionary", row_line, rows = body_rows,
+         cols = seq_len(ncol_tbl), gridExpand = TRUE, stack = TRUE)
+
+# freeze just below the table header so the preamble scrolls away but the column
+# headers stay visible while reading the variables
+freezePane(wb, "Dictionary", firstActiveRow = table_start + 1)
 
 # soft traffic-light shading (muted so amber does not read as a warning)
 core_fill   <- createStyle(fgFill = "#DDEBD8", wrapText = TRUE, valign = "top")  # soft green
 sec_fill    <- createStyle(fgFill = "#FBF0DD", wrapText = TRUE, valign = "top")  # soft amber
 ignore_fill <- createStyle(fgFill = "#EFEFEF", wrapText = TRUE, valign = "top")  # soft grey
-note_fill   <- createStyle(fgFill = "#E6EDF3", wrapText = TRUE, valign = "top",
-                           textDecoration = "bold")                              # guidance
 shade <- function(t, style) {
-  r <- which(sheet_df$tier == t) + 1
+  r <- which(dictionary$tier == t) + table_start   # offset to the table body
   if (length(r)) addStyle(wb, "Dictionary", style, rows = r,
-                          cols = seq_along(sheet_df), gridExpand = TRUE, stack = TRUE)
+                          cols = seq_len(ncol_tbl), gridExpand = TRUE, stack = TRUE)
 }
-shade("note", note_fill)
 shade("core", core_fill)
 shade("secondary", sec_fill)
 shade("ignore", ignore_fill)
