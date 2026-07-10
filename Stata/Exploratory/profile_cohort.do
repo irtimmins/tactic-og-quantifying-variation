@@ -1,9 +1,8 @@
 *==============================================================================
 * profile_cohort.do
 *
-* Describes a dataset you have not seen before. For each column it works out
+* Describes any health dataset. For each column it works out
 * what it holds, then prints a summary that suits it.
-*
 * It never prints individual rows. For columns that hold patient identifiers
 * or long notes it reports only how many there are and how long they are,
 * not what they say.
@@ -22,7 +21,7 @@ if `"`infile'"' == "" ///
 if `"$logfile"' == "" ///
     global logfile "D:/Projects/#2045_ICON_TACTIC/Project4_OG_variation_deviants/tactic-og-quantifying-variation/Data/test_data/profile_cohort_log.txt"
 
-* Settings. The defaults are sensible; you rarely need to change them.
+* Settings. The defaults are sensible.
 *
 *   maxgroups     the most groups we will list for one column. Above this we
 *                 just say how many there are, so we never end up printing a
