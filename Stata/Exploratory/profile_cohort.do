@@ -2,13 +2,11 @@
 * profile_cohort.do
 *
 * Describes a dataset you have not seen before. For each column it works out
-* what sort of thing it holds, then prints a summary that suits it.
+* what it holds, then prints a summary that suits it.
 *
 * It never prints individual rows. For columns that hold patient identifiers
 * or long notes it reports only how many there are and how long they are,
-* never what they say.
-*
-*     do profile_cohort.do "path/to/your_data.dta"
+* not what they say.
 *==============================================================================
 
 version 14.0
@@ -19,7 +17,7 @@ set more off
 * you run the script overrides the first of these.
 local infile `"`1'"'
 if `"`infile'"' == "" ///
-    local infile "D:/Projects/#2045_ICON_TACTIC/Project4_OG_variation_deviants/tactic-og-quantifying-variation/Data/test_data/og_cohort_2015_2022.dta"
+    local infile "D:/Projects/#2045_ICON_TACTIC/Project4_OG_variation_deviants/tactic-og-quantifying-variation/Data/test_data/og_ncras_test.dta"
 
 if `"$logfile"' == "" ///
     global logfile "D:/Projects/#2045_ICON_TACTIC/Project4_OG_variation_deviants/tactic-og-quantifying-variation/Data/test_data/profile_cohort_log.txt"
@@ -143,6 +141,17 @@ program define _classify, rclass
     foreach pat in trust hosp provider site org procode alliance ccg {
         if strpos("`lname'","`pat'") local nameorg = 1
     }
+
+    * Does the name suggest a clinical classification code, such as a
+    * morphology or ICD code? These are whole numbers with a fair few different
+    * values, but the number itself has no size or order to it - averaging a
+    * morphology code makes no more sense than averaging a phone number. Treat
+    * these the same way as organisation codes: always a set of groups.
+    local namecode = 0
+    foreach pat in morph icd_ icdcode _icd opcs {
+        if strpos("`lname'","`pat'") local namecode = 1
+    }
+    local nameorg = max(`nameorg', `namecode')
 
     * Does it look like a date? Three clues, taken in turn: Stata already shows
     * it as a date, the name mentions a date, or the text actually reads as one.
@@ -591,9 +600,6 @@ foreach v of local varlist {
 display _newline as text "{hline 78}"
 display as text "Finished. The same write-up has been saved to:"
 display as text "  $logfile"
-display as text "No individual rows were printed. Identifiers and long notes were"
-display as text "left out on purpose. Do glance down the summary table in case"
-display as text "anything has ended up in the wrong category."
 display as text "{hline 78}"
 
 log close profile
