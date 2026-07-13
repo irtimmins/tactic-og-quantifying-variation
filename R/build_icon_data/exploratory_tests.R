@@ -1,24 +1,23 @@
 # =============================================================================
-# Exploratory waiting-times analysis
+# Oesophageal (C15) waiting-times analysis - curative, non-emergency, stage 1-3
 # -----------------------------------------------------------------------------
-# Waiting times to decision-to-treat and from decision-to-treat to treatment,
-# broken down by deprivation, year of diagnosis and treatment modality.
+# Restricted to oesophageal cancer (cancer == "oesophagus", ICD-10 C15) per the
+# TACTIC hospital-QI inclusion criterion. Curative, non-emergency, stage 1-3,
+# diagnosed 2015-2022. Waiting times use dtt_valid == TRUE.
 #
-# Cohort: curative, non-emergency, stage 1-3 OG cancer diagnosed 2015-2022.
-# Waiting times require dtt_valid == TRUE (a clean CWT decision-to-treat
-# record anchored against a known curative treatment date).
+# Wait components covered (all in days), the endoscopy- and decision-to-treat
+# pathway end to end:
+#   endo_to_dtt : diagnostic endoscopy -> decision to treat   (audit clock start)
+#   dx_to_dtt   : diagnosis            -> decision to treat
+#   dtt_to_tx   : decision to treat    -> first treatment
+#   endo_to_tx  : diagnostic endoscopy -> first treatment      (endo_to_dtt + dtt_to_tx)
+#   dx_to_tx    : diagnosis            -> first treatment      (dx_to_dtt   + dtt_to_tx)
 #
-# Waits reported:
-#   wt_dx_to_dtt   : diagnosis to decision-to-treat
-#   wt_dtt_to_tx   : decision-to-treat to first treatment (the 62-day clock)
-#   wt_dx_to_tx    : diagnosis to first treatment (sum of the above)
-#
-# Breakdowns:
-#   1. Deprivation (IMD quintile, reversed: 1 = most deprived)
-#   2. Year of diagnosis (2015-2022)
-#   3. Audit treatment modality (curative categories)
+# All breakdowns are LONG: one row per group x wait component, with the grouping
+# (IMD, year, modality) reading DOWN the page, never spread across columns.
 #
 # Outputs: printed tables. Nothing saved unless write_outputs <- TRUE.
+# Needs: dplyr, tidyr.
 # =============================================================================
 
 library(dplyr)
@@ -28,152 +27,116 @@ source("R/build_icon_data/01_define_parameters.R")
 og <- readRDS(f_cohort_cwt)
 
 # -----------------------------------------------------------------------------
-# cohort restriction: curative, non-emergency, stage 1-3
+# cohort: oesophageal (C15), curative, non-emergency, stage 1-3
 # -----------------------------------------------------------------------------
-curative <- og %>%
-  filter(
-    received_curative_tx_audit == TRUE,
-    route_combined != "Emergency presentation",
-    stage_clean %in% c("1", "2", "3")
-  ) %>%
+coh <- og %>%
+  filter(received_curative_tx_audit == TRUE,
+         route_combined != "Emergency presentation",
+         cancer == "oesophagus",
+         stage_clean %in% c("1","2","3")) %>%
   mutate(
-    imd  = factor(NHSE_reversed_imd_quintile_lsoas,
-                  levels = c("1 - most deprived","2","3","4","5 - least deprived")),
-    year = as.integer(ydiag),
-    modality = tx_modality_audit,
-    wt_dx_to_tx = wt_dx_to_dtt + wt_dtt_to_tx   # full pathway wait
+    imd      = factor(NHSE_reversed_imd_quintile_lsoas,
+                      levels = c("1 - most deprived","2","3","4","5 - least deprived")),
+    year     = as.integer(ydiag),
+    modality = factor(tx_modality_audit),
+    wt_endo_to_tx = wt_endo_to_dtt + wt_dtt_to_tx,
+    wt_dx_to_tx   = wt_dx_to_dtt   + wt_dtt_to_tx
   )
 
 cat("==========  cohort  ==========\n")
-cat("curative, non-emergency, stage 1-3 patients:", nrow(curative), "\n")
+cat("oesophageal (C15), curative, non-emergency, stage 1-3:", nrow(coh), "\n")
 cat("  of which dtt_valid == TRUE (waits usable):",
-    sum(curative$dtt_valid == TRUE, na.rm = TRUE), "\n\n")
+    sum(coh$dtt_valid == TRUE, na.rm = TRUE), "\n")
 
-# restrict to valid DTT records for the wait tables
-wt <- curative %>% filter(dtt_valid == TRUE)
+wt <- coh %>% filter(dtt_valid == TRUE)
 
-# helper: percentile summary, returns a named data-frame row
-pct_row <- function(x) {
-  x <- x[!is.na(x)]
-  data.frame(
-    n      = length(x),
-    median = round(median(x), 0),
-    p25    = round(quantile(x, 0.25), 0),
-    p75    = round(quantile(x, 0.75), 0),
-    p90    = round(quantile(x, 0.90), 0)
-  )
+wait_cols <- c(endo_to_dtt = "wt_endo_to_dtt",
+               dx_to_dtt   = "wt_dx_to_dtt",
+               dtt_to_tx   = "wt_dtt_to_tx",
+               endo_to_tx  = "wt_endo_to_tx",
+               dx_to_tx    = "wt_dx_to_tx")
+wait_levels <- names(wait_cols)
+
+# long summary of every wait component within a grouping. grp = NULL -> overall.
+# Output is blocked BY WAIT COMPONENT: all rows for one wait (across the grouping)
+# sit together, so a gradient reads straight down the block.
+wait_long <- function(df, grp = NULL) {
+  d <- df %>% rename(all_of(wait_cols))
+  d <- if (is.null(grp)) mutate(d, .grp = "all") else rename(d, .grp = all_of(grp))
+  long <- d %>%
+    select(.grp, all_of(wait_levels)) %>%
+    pivot_longer(all_of(wait_levels), names_to = "wait", values_to = "days") %>%
+    filter(!is.na(days)) %>%
+    group_by(wait, .grp) %>%
+    summarise(n = n(),
+              median = round(median(days), 0),
+              p25 = round(quantile(days, .25), 0),
+              p75 = round(quantile(days, .75), 0),
+              p90 = round(quantile(days, .90), 0),
+              .groups = "drop") %>%
+    mutate(wait = factor(wait, levels = wait_levels)) %>%
+    arrange(wait, .grp) %>%
+    select(wait, .grp, n, median, p25, p75, p90)
+  names(long)[2] <- if (is.null(grp)) "cohort" else grp
+  as.data.frame(long)
 }
 
-# helper: apply pct_row to a grouped data-frame across the three waits
-wait_summary <- function(df, grp_var) {
-  df %>%
-    group_by(across(all_of(grp_var))) %>%
-    summarise(
-      n           = n(),
-      dx_dtt_med  = round(median(wt_dx_to_dtt,  na.rm = TRUE), 0),
-      dx_dtt_p75  = round(quantile(wt_dx_to_dtt, 0.75, na.rm = TRUE), 0),
-      dtt_tx_med  = round(median(wt_dtt_to_tx,  na.rm = TRUE), 0),
-      dtt_tx_p75  = round(quantile(wt_dtt_to_tx, 0.75, na.rm = TRUE), 0),
-      dx_tx_med   = round(median(wt_dx_to_tx,   na.rm = TRUE), 0),
-      dx_tx_p75   = round(quantile(wt_dx_to_tx,  0.75, na.rm = TRUE), 0),
-      .groups = "drop"
-    )
-}
-
-cat("columns: n | dx->dtt median | dx->dtt p75 | dtt->tx median |",
-    "dtt->tx p75 | dx->tx median | dx->tx p75  (all days)\n\n")
-
-# =============================================================================
 # 1. overall
-# =============================================================================
-cat("==========  overall  ==========\n")
-ov <- wt %>%
-  summarise(n = n(),
-            dx_dtt_med = round(median(wt_dx_to_dtt, na.rm=TRUE),0),
-            dx_dtt_p75 = round(quantile(wt_dx_to_dtt,.75,na.rm=TRUE),0),
-            dtt_tx_med = round(median(wt_dtt_to_tx, na.rm=TRUE),0),
-            dtt_tx_p75 = round(quantile(wt_dtt_to_tx,.75,na.rm=TRUE),0),
-            dx_tx_med  = round(median(wt_dx_to_tx,  na.rm=TRUE),0),
-            dx_tx_p75  = round(quantile(wt_dx_to_tx, .75,na.rm=TRUE),0))
-print(as.data.frame(ov))
+cat("\n==========  1. overall, by wait component  ==========\n")
+print(wait_long(wt))
 
-# =============================================================================
-# 2. by deprivation (IMD quintile)
-# =============================================================================
-cat("\n==========  by deprivation (IMD quintile, 1 = most deprived)  ==========\n")
-print(as.data.frame(wait_summary(wt, "imd")))
+# 2. by deprivation
+cat("\n==========  2. by deprivation (IMD quintile, 1 = most deprived)  ==========\n")
+print(wait_long(wt %>% filter(!is.na(imd)), "imd"))
 
-# gradient test: is there a monotone deprivation gradient?
-imd_med <- wt %>%
-  filter(!is.na(imd)) %>%
-  group_by(imd) %>%
-  summarise(dtt_tx_med = median(wt_dtt_to_tx, na.rm=TRUE), .groups="drop") %>%
-  arrange(imd)
-cat("\nDTT-to-tx medians across IMD quintiles (look for gradient):\n")
-print(as.data.frame(imd_med))
+# 3. by year
+cat("\n==========  3. by year of diagnosis  ==========\n")
+print(wait_long(wt, "year"))
+cat("(2020-2021 may reflect covid disruption to pathways)\n")
 
-# =============================================================================
-# 3. by year of diagnosis
-# =============================================================================
-cat("\n==========  by year of diagnosis  ==========\n")
-print(as.data.frame(wait_summary(wt, "year")))
-
-# flag the covid dip years
-cat("\n(note: 2020-2021 may reflect covid disruption to pathways)\n")
-
-# =============================================================================
-# 4. by audit treatment modality (curative categories only)
-# =============================================================================
-cat("\n==========  by treatment modality  ==========\n")
-# keep only the curative modality categories for this table
+# 4. by modality
+cat("\n==========  4. by treatment modality  ==========\n")
 curative_mods <- c("Surgery only","Surgery plus SACT/RT","Definitive chemoRT",
                    "EMR/ESD","Curative RT only")
 wt_mod <- wt %>% filter(modality %in% curative_mods) %>%
   mutate(modality = factor(modality, levels = curative_mods))
-print(as.data.frame(wait_summary(wt_mod, "modality")))
+print(wait_long(wt_mod, "modality"))
 
-# =============================================================================
-# 5. deprivation by modality - is the gradient different by treatment type?
-# =============================================================================
-cat("\n==========  DTT-to-tx median by modality and IMD  ==========\n")
-wt_mod %>%
+# 5. key-leg medians by deprivation (long)
+cat("\n==========  5. key-leg medians by deprivation (long)  ==========\n")
+wt %>%
   filter(!is.na(imd)) %>%
-  group_by(modality, imd) %>%
-  summarise(n = n(), dtt_tx_med = round(median(wt_dtt_to_tx, na.rm=TRUE), 0),
-            .groups = "drop") %>%
-  pivot_wider(names_from = imd, values_from = c(n, dtt_tx_med),
-              names_glue = "{imd}_{.value}") %>%
-  as.data.frame() %>% print()
+  select(imd, endo_to_dtt = wt_endo_to_dtt, dtt_to_tx = wt_dtt_to_tx) %>%
+  pivot_longer(c(endo_to_dtt, dtt_to_tx), names_to = "leg", values_to = "days") %>%
+  filter(!is.na(days)) %>%
+  group_by(leg, imd) %>%
+  summarise(n = n(), median = round(median(days), 0),
+            p75 = round(quantile(days, .75), 0), .groups = "drop") %>%
+  mutate(leg = factor(leg, levels = c("endo_to_dtt","dtt_to_tx"))) %>%
+  arrange(leg, imd) %>% as.data.frame() %>% print()
 
-# =============================================================================
-# 6. deprivation by year - does the gradient change over time?
-# =============================================================================
-cat("\n==========  DTT-to-tx median by year and IMD  ==========\n")
+# 6. decision-to-treatment wait by year and deprivation (long)
+cat("\n==========  6. decision-to-treatment wait by year and deprivation (long)  ==========\n")
 wt %>%
   filter(!is.na(imd)) %>%
   group_by(year, imd) %>%
-  summarise(n = n(), dtt_tx_med = round(median(wt_dtt_to_tx, na.rm=TRUE), 0),
+  summarise(n = n(), dtt_to_tx_med = round(median(wt_dtt_to_tx, na.rm = TRUE), 0),
             .groups = "drop") %>%
-  pivot_wider(names_from = imd, values_from = c(n, dtt_tx_med),
-              names_glue = "{imd}_{.value}") %>%
-  arrange(year) %>% as.data.frame() %>% print()
+  arrange(year, imd) %>% as.data.frame() %>% print()
 
 cat("\n==========  notes  ==========\n")
-cat("Waits in days. dtt_valid == TRUE filter applied throughout.\n")
-cat("Negative values arise where the CWT treatment date precedes the DTT date\n")
-cat("(a known CWT data-quality artefact, flagged dtt_valid = FALSE; these are\n")
-cat("excluded here).\n")
-cat("IMD direction: 1 = most deprived, 5 = least deprived (reversed from NDRS default).\n")
+cat("Oesophageal (C15) only. Waits in days; dtt_valid == TRUE throughout.\n")
+cat("endo_to_dtt is the audit-aligned clock start (preferred over dx_to_dtt).\n")
+cat("Negative waits (CWT treatment date before the decision-to-treat date) are a\n")
+cat("known CWT data-quality artefact and are already excluded via dtt_valid.\n")
+cat("IMD direction: 1 = most deprived, 5 = least deprived (reversed from NDRS).\n")
 
-# optional: save tables for further work
 if (!exists("write_outputs")) write_outputs <- FALSE
 if (isTRUE(write_outputs)) {
-  out <- list(
-    overall         = as.data.frame(ov),
-    by_imd          = as.data.frame(wait_summary(wt, "imd")),
-    by_year         = as.data.frame(wait_summary(wt, "year")),
-    by_modality     = as.data.frame(wait_summary(wt_mod, "modality"))
-  )
-  saveRDS(out, file.path(dir_icon, "explore_waiting_times.rds"))
-  cat("\ntables saved ->", file.path(dir_icon, "explore_waiting_times.rds"), "\n")
+  out <- list(overall    = wait_long(wt),
+              by_imd      = wait_long(wt %>% filter(!is.na(imd)), "imd"),
+              by_year     = wait_long(wt, "year"),
+              by_modality = wait_long(wt_mod, "modality"))
+  saveRDS(out, file.path(dir_icon, "explore_waiting_times_c15.rds"))
+  cat("\ntables saved ->", file.path(dir_icon, "explore_waiting_times_c15.rds"), "\n")
 }

@@ -4,7 +4,13 @@
 # From the HES APC and HES OP extracts, build the three HES-coded treatment
 # anchors, one row per patient:
 #   - diagnostic endoscopy : first qualifying endoscopy on/up to 30 days before
-#                            diagnosis (the PI3 clock start), from APC then OP
+#                            diagnosis (the PI3 clock start), from APC then OP.
+#                            The APC episode also carries its site (SITETRET) and
+#                            provider (PROCODE3), so the endoscopy hospital is
+#                            available for the endoscopy-to-decision-to-treat
+#                            analysis. HES OP has no site field in the source
+#                            (provider only, and not in the current extract), so
+#                            OP-sourced patients have no endoscopy site.
 #   - EMR/ESD              : first endotherapy in the treatment window
 #   - major surgery        : first elective OG resection in the window, with the
 #                            surgery type, provider and curative-intent flag
@@ -33,10 +39,14 @@ check_extract(hes_op, c("STUDY_ID","appt_date","ATTENDED"),
 hes_endoscopy_apc <- match_opcs_episodes(hes_apc, opcs_diagnostic_endoscopy,
                                          op_cols, opdate_cols)
 
+# The APC episode carries SITETRET (5-character site) and PROCODE3 (3-character
+# provider). Both sit on the same episode the surgery branch reads them from, so
+# we simply carry them through onto the endoscopy anchor.
 endoscopy_anchor_apc <- ncras_og %>%
   select(pseudo_patientid, diagmdy) %>%
   left_join(hes_endoscopy_apc %>%
-              select(pseudo_patientid, EPISTART, EPIORDER, opcs4, op_date),
+              select(pseudo_patientid, EPISTART, EPIORDER, opcs4, op_date,
+                     SITETRET, PROCODE3),
             by = "pseudo_patientid") %>%
   mutate(days_endo_to_dx = as.integer(diagmdy - op_date)) %>%
   filter(!is.na(days_endo_to_dx),
@@ -44,11 +54,16 @@ endoscopy_anchor_apc <- ncras_og %>%
          days_endo_to_dx <= endoscopy_pre_dx_days) %>%
   arrange(pseudo_patientid, op_date) %>%
   distinct(pseudo_patientid, .keep_all = TRUE) %>%
-  rename(endoscopy_date = op_date) %>%
-  select(pseudo_patientid, endoscopy_date, days_endo_to_dx) %>%
+  rename(endoscopy_date         = op_date,
+         sitetret_endoscopy_apc = SITETRET,
+         procode3_endo_apc      = PROCODE3) %>%
+  select(pseudo_patientid, endoscopy_date, days_endo_to_dx,
+         sitetret_endoscopy_apc, procode3_endo_apc) %>%
   mutate(endo_source = "APC")
 
-# OP endoscopy: attended outpatient appointments carrying an endoscopy OPCS code
+# OP endoscopy: attended outpatient appointments carrying an endoscopy OPCS code.
+# HES OP has no site field, so these patients get no endoscopy site; the two site
+# columns are added as missing to match the APC branch's shape for the combine.
 op_op_cols <- names(hes_op)[str_starts(names(hes_op), "OPERTN_")]
 hes_op_endoscopy <- hes_op %>%
   pivot_longer(all_of(op_op_cols), names_to = "op_position", values_to = "opcs_code") %>%
@@ -68,8 +83,11 @@ endoscopy_anchor_op <- ncras_og %>%
          days_endo_to_dx <= endoscopy_pre_dx_days) %>%
   arrange(pseudo_patientid, endoscopy_date) %>%
   distinct(pseudo_patientid, .keep_all = TRUE) %>%
-  select(pseudo_patientid, endoscopy_date, days_endo_to_dx) %>%
-  mutate(endo_source = "OP")
+  mutate(sitetret_endoscopy_apc = NA_character_,
+         procode3_endo_apc      = NA_character_,
+         endo_source            = "OP") %>%
+  select(pseudo_patientid, endoscopy_date, days_endo_to_dx,
+         sitetret_endoscopy_apc, procode3_endo_apc, endo_source)
 
 # combine: APC preferred, OP fills patients APC missed
 endoscopy_anchor <- endoscopy_anchor_apc %>%
@@ -82,6 +100,9 @@ saveRDS(endoscopy_anchor, f_endoscopy_anchor)
 cat("Endoscopy anchor:", n_distinct(endoscopy_anchor$pseudo_patientid),
     "patients (APC", sum(endoscopy_anchor$endo_source == "APC"),
     "/ OP", sum(endoscopy_anchor$endo_source == "OP"), ")\n")
+cat("  with a 5-char endoscopy site:",
+    sum(!is.na(endoscopy_anchor$sitetret_endoscopy_apc)),
+    "of", nrow(endoscopy_anchor), "\n")
 
 # -----------------------------------------------------------------------------
 # EMR / ESD endotherapy: first in the -30d .. +9-month window
@@ -156,5 +177,6 @@ cat("Surgery anchor:", n_distinct(surgery_anchor$pseudo_patientid),
 cat("04 complete. Next: 05_derive_comorbidities.R\n")
 
 # ---- optional checks (uncomment to inspect) ---------------------------------
+# count(endoscopy_anchor, endo_source, has_site = !is.na(sitetret_endoscopy_apc)) %>% print()
 # count(surgery_anchor, surgery_type, surgery_class, curative_surgery) %>% print()
 # summary(emresd_anchor$days_dx_to_emresd)

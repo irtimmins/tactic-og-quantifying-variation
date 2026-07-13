@@ -39,7 +39,7 @@ if "$numgroups"    == "" global numgroups    25
 if "$showextremes" == "" global showextremes 1
 if "$dateparse"    == "" global dateparse    0.90
 if "$iduniq"       == "" global iduniq       0.98
-if "$hidesmall"    == "" global hidesmall    0
+if "$hidesmall"    == "" global hidesmall    5
 if "$roundto"      == "" global roundto      1
 
 * Save everything to a text file as well as showing it on screen.

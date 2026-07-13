@@ -30,7 +30,8 @@ og_cci           <- readRDS(f_cci)
 # -----------------------------------------------------------------------------
 og_cohort <- ncras_og %>%
   left_join(endoscopy_anchor %>%
-              select(pseudo_patientid, endoscopy_date, days_endo_to_dx),
+              select(pseudo_patientid, endoscopy_date, days_endo_to_dx,
+                     endo_source, sitetret_endoscopy_apc, procode3_endo_apc),
             by = "pseudo_patientid") %>%
   left_join(emresd_anchor %>%
               select(pseudo_patientid, emresd_date, emresd_provider, days_dx_to_emresd),
